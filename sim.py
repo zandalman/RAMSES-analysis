@@ -28,6 +28,47 @@ list_of_sim_name = ["alpha_eps0p01", "alpha_eps0p1", "alpha_eps1p0", "dmo", "gas
 list_of_sim_latex = [r"$\varepsilon_{\rm SF} = 0.01$", r"$\varepsilon_{\rm SF} = 0.1$", r"$\varepsilon_{\rm SF} = 1.0$", "Dark Matter Only", "Multi-Freefall Model"]
 
 
+class Terminal:
+    '''
+    Context manager for running commands in the terminal from Python.
+    '''
+    def __enter__(self):
+        self.cwd = os.getcwd()
+        return None
+    
+    def __exit__(self, exc_type, exc_value, exc_tb):
+        os.chdir(self.cwd)
+        
+        
+def git_commit(git_message=None):
+    '''
+    Commit relevant files to git and push changes.
+    
+    Args
+    git_message (str): message for the commit
+    '''
+    with Terminal() as terminal:
+        
+        os.chdir(analysis_dir)
+        if git_message == None: git_message = "pushing updates to analysis code"
+        list_of_filename = ["analysis.ipynb", "yt_to_numpy.ipynb", "const.py", "sim.py"]
+        
+        for filename in list_of_filename:
+            os.system("git add %s" % filename)
+        os.system("git commit -m '%s'" % git_message)
+        os.system("git push")
+        
+        
+def clear_figures():
+    '''
+    Move all current figures to legacy folder.
+    '''
+    with Terminal() as terminal:
+        
+        os.chdir(save_dir)
+        os.system("$SHELL clear_figures.sh")
+
+
 def save_fig(fig_name, filetype="png", dpi=300):
         '''
         Save the current matplotlib figure.
