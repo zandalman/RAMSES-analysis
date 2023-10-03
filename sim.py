@@ -4,12 +4,19 @@ from tabulate import tabulate
 
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
+
 from datetime import datetime
 from scipy.integrate import quad, quad_vec, trapz, cumtrapz
 from scipy.optimize import fsolve
+from scipy.ndimage import gaussian_filter
+from scipy.special import erf
+from scipy.interpolate import griddata, interpn
+
 import const
 
 X, Y, Z = 0, 1, 2
+R, H, PH = 0, 1, 2
 ALPHA_EPS0P01, ALPHA_EPS0P1, ALPHA_EPS1P0, DMO, GAS = 0, 1, 2, 3, 4
 HYDRO, DM, STAR = 0, 1, 2
 epsilon = 1e-30
@@ -52,6 +59,26 @@ def calc_fft(x, y):
     x_fft = np.fft.rfftfreq(y.size, d=np.diff(x)[0])
     
     return x_fft, y_fft
+
+
+def calc_AH_coords(h, ph):
+    ''' 
+    Compute the Aitoff-Hammer projection coordinates.
+    
+    Args
+    h: polar coordinate
+    ph: azimuthal coordinate
+    
+    Returns
+    AH1, AH2: Aitoff-Hammer projection coordinates
+    '''
+    h_bar = np.pi/2 - h
+    lamb = ph - np.pi
+    
+    AH1 = 2 * np.cos(h_bar) * np.sin(lamb / 2) / np.sqrt(1 + np.cos(h_bar) * np.cos(lamb / 2))
+    AH2 = np.sin(h_bar) / np.sqrt(1 + np.cos(h_bar) * np.cos(lamb / 2))
+    
+    return AH1, AH2
     
     
 class Sim(object):
@@ -120,9 +147,15 @@ class Sim(object):
     gamma (float): adiabatic index
     c_s: array of sound speeds
     mach: array of Mach numbers
+    v_turb_1d: array of one-dimensional turbulent velocities
+    mach_turb: array of turbulent mach numbers
+    alpha_vir: array of virial parameters
+    t_ff: array of freefall times
+    epsilon_SF: array of star formation efficiencies
+    SFR_density: array of star formation rate densities
     summury_stats (dict): summary statistics
     '''
-    def __init__(self, sim_idx, npz_file):
+    def __init__(self, sim_idx, npz_file, epsilon_SF=None):
         
         self.sim_idx = sim_idx
         self.sim_name = list_of_sim_name[self.sim_idx]
@@ -138,12 +171,51 @@ class Sim(object):
         for var_name in data:
             setattr(self, var_name, data[var_name])
             
+        self.dA = self.dx**2
+        self.coord_r_1d = np.linspace(0, np.max(self.coord1d), self.N // 2)
+        self.coord_h_1d = np.linspace(0, np.pi, self.N // 2)
+        self.coord_ph_1d = np.linspace(0, 2 * np.pi, self.N)
+        self.coord_sph = np.array(np.meshgrid(self.coord_r_1d, self.coord_h_1d, self.coord_ph_1d, indexing='ij'))
+        self.dr = np.diff(self.coord_r_1d)[0]
+        self.dh = np.diff(self.coord_h_1d)[0]
+        self.dph = np.diff(self.coord_ph_1d)[0]
+        self.coord_cart_at_sph = np.array([
+            self.coord_sph[R] * np.cos(self.coord_sph[PH]) * np.sin(self.coord_sph[H]),
+            self.coord_sph[R] * np.sin(self.coord_sph[PH]) * np.sin(self.coord_sph[H]),
+            self.coord_sph[R] * np.cos(self.coord_sph[H])
+        ])
+        self.coord_AH_at_sph = np.array(calc_AH_coords(self.coord_sph[H, 0], self.coord_sph[PH, 0]))
+        self.dA_hph = np.sin(self.coord_sph[H]) * self.dh * self.dph
+
         self.n_H = const.X_cosmo * self.density / const.m_H
         self.v_turb = np.sqrt(2 * self.turb_energy)
         self.star_age = self.current_time - self.star_birth_time
         self.gamma = 5/3
         self.c_s = np.sqrt(self.gamma * self.pressure / self.density)
         self.mach = self.vel / self.c_s
+        self.v_turb_1d = self.v_turb / np.sqrt(3)
+        self.mach_turb = self.v_turb_1d / self.c_s
+        self.alpha_vir = 15 / np.pi * self.c_s**2 * (1 + self.mach_turb**2) / (const.G * self.density * self.dx**2)
+        self.t_ff = np.sqrt(3 * np.pi / (32 * const.G * self.density))
+        self.n_dust = self.metallicity * self.n_H
+        self.n_dust[self.temperature > 1e4] = 0
+
+        if epsilon_SF == None:
+            '''
+            See Federrath&Klessen2012 (https://arxiv.org/pdf/1209.2856.pdf) and Kretschmer&Teyssier2021 (https://arxiv.org/pdf/1906.11836.pdf) for details.
+            b varies smoothly between b ~ 1/3 for purely solenoidal (divergence-free) forcing 
+            and b ~ 1 for purely compressive (curl-free) forcing of the turbulence
+            A stochastic mixture of forcing modes in 3-d space leads to b ~ 0.4
+            '''
+            b = 1. # turbulence forcing parameter
+            s_crit = np.log(self.alpha_vir * (1 + (2 * self.mach_turb**4) / (1 + self.mach_turb**2))) # lognormal critical density for star formation
+            sigma_s = np.sqrt(np.log(1 + b**2 * self.mach_turb**2)) # standard deviation of the lognormal subgrid density distribution
+            self.epsilon_SF = 1/2 * np.exp(3/8 * sigma_s**2) * (1 + erf((sigma_s**2 - s_crit) / np.sqrt(2 * sigma_s**2))) # star formation efficiency
+            self.SFR_density = self.epsilon_SF * self.density / self.t_ff
+        else:
+            self.epsilon_SF = epsilon_SF
+            self.SFR_density = self.epsilon_SF * self.density / self.t_ff
+            # not correctly implemented; need density criterion for SF; why is alpha_vir so big when it is unitless?
             
         self.summary_stats = {}
             
@@ -193,6 +265,12 @@ class Sim(object):
         return a
 
 
+    def interp_to_sph(self, field):
+        ''' Interpolate a field to a spherical grid '''
+        field_sph = interpn(self.coord1d, field, np.moveaxis(self.coord_cart_at_sph, 0, -1))
+        return field_sph
+    
+    
     def plot_slice(self, field, extrema, slice=Z, project=False, weight=None, cond=None, avg=True, width=None, do_log=True, slice_coord=None, nlevels=200, cmap='jet', cbar_label='field', cbar_tick_increment=None, plot_star=False, plot_dm=False, isocontours=None):
         '''
         Plot a cross section of a field perpendicular to a coordinate axis.
@@ -209,6 +287,7 @@ class Sim(object):
         do_log (bool): plot the log of the field
         slice_coord (float): coordinate of the cross section
         nlevels (int): number of levels in the contour plot
+        cmap (str): colormap for the plot
         cbar_label (string): colorbar label
         cbar_tick_increment (float): increment of the colorbar ticks
         plot_star (bool): plot markers for star particles within one cell of the cross section
@@ -269,6 +348,51 @@ class Sim(object):
             plt.plot(self.dm_coord[coord1_idx][in_slice_dm] / const.kpc, self.dm_coord[coord2_idx][in_slice_dm] / const.kpc, marker='.', color='black', linestyle='')
 
 
+    def plot_AH(self, field2d, extrema, do_log=True, nlevels=200, cmap='jet', cbar_label='field', cbar_tick_increment=None, num_axis_lines=12, axis_labels=True):
+        '''
+        Plot a spherical slice of a field using the Aitoff-Hammer projection.
+
+        Args
+        field2d: two-dimensional field, with theta on the first axis and phi on the second
+        extrema (tuple): tuple of min and max field value
+        do_log (bool): plot the log of the field
+        nlevels (int): number of levels in the contour plot
+        cmap (str): colormap for the plot
+        cbar_label (string): colorbar label
+        cbar_tick_increment (float): increment of the colorbar ticks
+        num_axis_lines (int): number of lines of constant theta and phi to mark on plot
+        axis_labels (bool): label lines of constant theta and phi
+        '''
+        plt.gca().set_aspect(3/2)
+        plt.axis("off")
+
+        if cbar_tick_increment == None: cbar_tick_increment = (extrema[1] - extrema[0]) / 10
+
+        if do_log: 
+            field2d = np.log10(field2d + epsilon)
+            extrema = (np.log10(extrema[0]), np.log10(extrema[1]))
+
+        for i, axis_line_value in enumerate(np.arange(0, (num_axis_lines + 0.5) * np.pi / num_axis_lines, np.pi / num_axis_lines)):
+
+            AH1_h_axis_line, AH2_h_axis_line = calc_AH_coords(axis_line_value * np.ones_like(self.coord_ph_1d), self.coord_ph_1d)
+            plt.plot(AH1_h_axis_line, AH2_h_axis_line, color='black', lw=0.75)
+            AH1_ph_axis_line, AH2_ph_axis_line = calc_AH_coords(self.coord_h_1d, 2 * axis_line_value * np.ones_like(self.coord_h_1d))
+            plt.plot(AH1_ph_axis_line, AH2_ph_axis_line, color='black', lw=0.75)
+
+            if axis_labels and i not in [0, num_axis_lines]:
+
+                h_label = r'$%d^\circ$' % int(np.round(axis_line_value * 180 / np.pi))
+                plt.annotate(h_label, (AH1_h_axis_line[0], AH2_h_axis_line[0]), xytext=(-3., 0), xycoords='data', textcoords='offset fontsize', rotation=0)
+                ph_label = r'$%d^\circ$' % int(np.round(axis_line_value * 360 / (np.pi)))
+                plt.annotate(ph_label, (AH1_ph_axis_line[self.N//4], AH2_ph_axis_line[self.N//4]), xytext=(0.3, -0.5), xycoords='data', textcoords='offset fontsize', rotation=90)
+
+        plt.annotate(r'$\theta$', (0., 0.5), xytext=(-2.5, -0.25), xycoords='axes fraction', fontsize=20, textcoords='offset fontsize')
+        plt.annotate(r'$\varphi$', (0.5, 0.), xytext=(-0.5, -1), xycoords='axes fraction', fontsize=20, textcoords='offset fontsize')
+
+        plt.contourf(self.coord_AH_at_sph[0], self.coord_AH_at_sph[1], field2d, levels=np.linspace(extrema[0], extrema[1], nlevels), cmap=cmap, extend='both')
+        plt.colorbar(ticks=np.arange(extrema[0], extrema[1] + cbar_tick_increment, cbar_tick_increment), label=cbar_label) 
+    
+    
     def calc_radial_profile(self, field, r_lim=None, nbins=100, weight=None, cond=None):
         '''
         Compute radial profile of field averaged over spherical shells.
