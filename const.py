@@ -19,6 +19,7 @@ L_sol = 3.9e33 # solar luminosity [erg/s]
 T_sol = 5.780e3 # solar temperature [L]
 X_sol, Y_sol, Z_sol = 0.7381, 0.2485, 0.0134 # solar abundances
 X_cosmo, Y_cosmo, Z_cosmo = 0.7515, 0.2485, 0. # cosmological abundances
+T_HII = 1e4 # hydrogen ionization temperature [Kelvin]
 
 c = 2.99792458e10 # speed of light [cm/s]
 h = 6.6260755e-27 # plank constant [erg/s]

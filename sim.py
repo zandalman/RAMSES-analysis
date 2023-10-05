@@ -15,11 +15,12 @@ from scipy.interpolate import griddata, interpn
 
 import const
 
-X, Y, Z = 0, 1, 2
-R, H, PH = 0, 1, 2
+X, Y, Z = 0, 1, 2 # cartesian coordinate indices
+S, H, Z = 0, 1, 2 # cylindrical coordinate indices
+R, H, PH = 0, 1, 2 # spherical coordinate indices
 ALPHA_EPS0P01, ALPHA_EPS0P1, ALPHA_EPS1P0, DMO, GAS = 0, 1, 2, 3, 4
 HYDRO, DM, STAR = 0, 1, 2
-epsilon = 1e-30
+epsilon = 1e-30 # small number
 
 analysis_dir = "/home/za9132/analysis"
 save_dir = os.path.join(analysis_dir, "figures")
@@ -137,6 +138,7 @@ class Sim(object):
     a_exp (float): expansion factor
     redshift (float): redshift
     current_time (float): proper time
+    
     H0 (float): Hubble constant at z=0
     Omega_m0 (float): mass density parameter at z=0
     Omega_L0 (float): dark matter density parameter at z=0
@@ -144,6 +146,7 @@ class Sim(object):
     Omega_b0 (float): baryon density parameter at z=0
     H (float): Hubble constant
     rho_crit (float): critical density
+    
     length_unit (float): cm per code unit of length
     density_unit (float): g/cm^3 per code unit of density
     time_unit (float): s per code unit of time
@@ -151,12 +154,14 @@ class Sim(object):
     velocity_unit (float): cm/s per code unit of velocity
     energy_unit (float): erg per code unit of energy
     energy_density_unit (float): erg/cm^3 per code unit of energy density
+    
     amr_level (int): number of AMR levels in the simulation
     box_size (float): simulation box size in code units of length
     left_edge: array of coordinate of the left corner of the simulation box in code units of length
     N (int): array size
     dx (float): length element
     dV (float): volume element
+    
     dm_coord: array of dark matter particle coordinates
     dm_mass: array of dark matter particles masses
     star_coord: array of star particle coordinates
@@ -164,15 +169,16 @@ class Sim(object):
     star_birth_time: array of star particle birth times
     coord: coordinate array
     coord1d: 1d coordinate array
+    r: radial coordinate array
+    r_dm: array of radial coordinates of dark matter particles
+    r_star: array of radial coordinates of star matter particles
+    
     density: array of densities
     metallicity: array of metallicities
     pressure: array of pressures
     turb_energy: array of turbulent energies
     refinement_criterion: array of refinement criteria
     vel_vec: array of velocity vectors
-    r: radial coordinate array
-    r_dm: array of radial coordinates of dark matter particles
-    r_star: array of radial coordinates of star matter particles
     temperature: array of temperatures
     vel: array of velocity magnitudes
     
@@ -182,6 +188,19 @@ class Sim(object):
     sim_dir (str): path to the simulation data
     save_dir (str): path of the directory to save figures
     npz_file (str): name of the npz file
+    
+    dA (float): area element
+    coord_r_1d: 1d radial coordinate array
+    coord_h_1d: 1d polar coordinare array
+    coord_ph_1d: 1d azimuthal coordinate array
+    coord_sph: spherical coordinate array
+    dr (float): radial coordinate element
+    dh (float): polar coordinate element
+    dph (float): azimuthal coordinate element
+    coord_card_at_sph: cartesian coordinate array at spherical coordinate grid points
+    coord_AH_at_sph: Aitoff-Hammer projection coordinate array at spherical coordinate grid points
+    dA_hph: array of spherical area elements
+    
     n_H: array of hydrogen number densities
     v_turb: array of turbulent velocities
     star_age: array of ages of star particles
@@ -192,6 +211,8 @@ class Sim(object):
     mach_turb: array of turbulent mach numbers
     alpha_vir: array of virial parameters
     t_ff: array of freefall times
+    n_dust: array of dust number densities
+    
     epsilon_SF: array of star formation efficiencies
     SFR_density: array of star formation rate densities
     summury_stats (dict): summary statistics
@@ -212,7 +233,24 @@ class Sim(object):
         for var_name in data:
             setattr(self, var_name, data[var_name])
             
+        # see https://en.wikipedia.org/wiki/Del_in_cylindrical_and_spherical_coordinates for coordinate and unit vector conversions
+        self.coord_cyl_at_cart = np.array([
+            np.sqrt(self.coord[X]**2 + self.coord[Y]**2),
+            np.arctan2(self.coord[Y], self.coord[X]),
+            self.coord[Z]
+        ])
+        self.coord_sph_at_cart = np.array([
+            np.sqrt(np.sum(self.coord**2, axis=0)),
+            np.arctan2(self.coord_cyl_at_cart[S], self.coord[Z]),
+            np.arctan2(self.coord[Y], self.coord[X])
+        ])
+        self.vel_vec_sph_at_cart = np.array([
+            np.sum(self.coord * self.vel_vec, axis=0) / self.coord_sph_at_cart[R],
+            ((self.coord[X] * self.vel_vec[X] + self.coord[Y] * self.vel_vec[Y]) * self.coord[Z] - self.coord_cyl_at_cart[S]**2 * self.vel_vec[Z]) / (self.coord_sph_at_cart[R] * self.coord_cyl_at_cart[S]),
+            (-self.coord[Y] * self.vel_vec[X] + self.coord[X] * self.vel_vec[Y]) / self.coord_cyl_at_cart[S]
+        ])
         self.dA = self.dx**2
+        
         self.coord_r_1d = np.linspace(0, np.max(self.coord1d), self.N // 2)
         self.coord_h_1d = np.linspace(0, np.pi, self.N // 2)
         self.coord_ph_1d = np.linspace(0, 2 * np.pi, self.N)
@@ -226,7 +264,7 @@ class Sim(object):
             self.coord_sph[R] * np.cos(self.coord_sph[H])
         ])
         self.coord_AH_at_sph = np.array(calc_AH_coords(self.coord_sph[H, 0], self.coord_sph[PH, 0]))
-        self.dA_hph = np.sin(self.coord_sph[H]) * self.dh * self.dph
+        self.dA_hph = self.coord_sph[R]**2 * np.sin(self.coord_sph[H]) * self.dh * self.dph
 
         self.n_H = const.X_cosmo * self.density / const.m_H
         self.v_turb = np.sqrt(2 * self.turb_energy)
@@ -236,10 +274,10 @@ class Sim(object):
         self.mach = self.vel / self.c_s
         self.v_turb_1d = self.v_turb / np.sqrt(3)
         self.mach_turb = self.v_turb_1d / self.c_s
-        self.alpha_vir = 15 / np.pi * self.c_s**2 * (1 + self.mach_turb**2) / (const.G * self.density * self.dx**2)
+        self.alpha_vir = 15 / np.pi * self.c_s**2 * (1 + self.mach_turb**2) / (const.G * self.density * self.dA)
         self.t_ff = np.sqrt(3 * np.pi / (32 * const.G * self.density))
         self.n_dust = self.metallicity * self.n_H
-        self.n_dust[self.temperature > 1e4] = 0
+        self.n_dust[self.temperature > const.T_HII] = 0
 
         if epsilon_SF == None:
             '''
@@ -248,7 +286,7 @@ class Sim(object):
             and b ~ 1 for purely compressive (curl-free) forcing of the turbulence
             A stochastic mixture of forcing modes in 3-d space leads to b ~ 0.4
             '''
-            b = 1. # turbulence forcing parameter
+            b = 0.4 # turbulence forcing parameter
             s_crit = np.log(self.alpha_vir * (1 + (2 * self.mach_turb**4) / (1 + self.mach_turb**2))) # lognormal critical density for star formation
             sigma_s = np.sqrt(np.log(1 + b**2 * self.mach_turb**2)) # standard deviation of the lognormal subgrid density distribution
             self.epsilon_SF = 1/2 * np.exp(3/8 * sigma_s**2) * (1 + erf((sigma_s**2 - s_crit) / np.sqrt(2 * sigma_s**2))) # star formation efficiency
@@ -365,7 +403,7 @@ class Sim(object):
 
         plt.contourf(coord12d / const.kpc, coord22d / const.kpc, field2d, extend='both', cmap=cmap, levels=np.linspace(extrema[0], extrema[1], nlevels))
         plt.gca().set_aspect(True)
-        plt.colorbar(ticks=np.arange(extrema[0], extrema[1] + cbar_tick_increment, cbar_tick_increment), label=cbar_label)
+        plt.colorbar(ticks=np.arange(extrema[0], extrema[1] + 0.5 * cbar_tick_increment, cbar_tick_increment), label=cbar_label)
 
         coord_labels = [r"$x$ [kpc]", r"$y$ [kpc]", r"$z$ [kpc]"]
         coord1_label, coord2_label = coord_labels[coord1_idx], coord_labels[coord2_idx]
@@ -431,7 +469,7 @@ class Sim(object):
         plt.annotate(r'$\varphi$', (0.5, 0.), xytext=(-0.5, -1), xycoords='axes fraction', fontsize=20, textcoords='offset fontsize')
 
         plt.contourf(self.coord_AH_at_sph[0], self.coord_AH_at_sph[1], field2d, levels=np.linspace(extrema[0], extrema[1], nlevels), cmap=cmap, extend='both')
-        plt.colorbar(ticks=np.arange(extrema[0], extrema[1] + cbar_tick_increment, cbar_tick_increment), label=cbar_label) 
+        plt.colorbar(ticks=np.arange(extrema[0], extrema[1] + 0.5 * cbar_tick_increment, cbar_tick_increment), label=cbar_label) 
     
     
     def calc_radial_profile(self, field, r_lim=None, nbins=100, weight=None, cond=None):
@@ -507,7 +545,7 @@ class Sim(object):
         return field1_2d, field2_2d, mass_2d
 
 
-    def calc_mean(self, field, weight=None, cond=None):
+    def calc_mean(self, field, weight=None, cond=None, axis=None, do_sum=False):
         '''
         Calculate the mean value of a field
 
@@ -515,6 +553,8 @@ class Sim(object):
         field: field
         weight: weight array
         cond: conditional array to select a specific region
+        axis: axes over which to compute mean
+        do_sum (bool): compute the sum instead of the mean
 
         Returns
         mean: mean value of the field
@@ -522,7 +562,10 @@ class Sim(object):
         if np.all(cond) == None: cond = 1.
         if np.all(weight) == None: weight = 1.
 
-        mean = np.sum(field * weight * cond) / np.sum(np.ones_like(field) * weight * cond)
+        if do_sum:
+            mean = np.sum(field * weight * cond, axis=axis)
+        else:    
+            mean = np.sum(field * weight * cond, axis=axis) / np.sum(np.ones_like(field) * weight * cond, axis=axis)
 
         return mean
 
