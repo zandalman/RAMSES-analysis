@@ -13,11 +13,14 @@ from scipy.ndimage import gaussian_filter
 from scipy.special import erf
 from scipy.interpolate import griddata, interpn
 
+from functools import cached_property
+
 import const
 
 X, Y, Z = 0, 1, 2 # cartesian coordinate indices
-S, H, Z = 0, 1, 2 # cylindrical coordinate indices
+S, PH2, Z = 0, 1, 2 # cylindrical coordinate indices
 R, H, PH = 0, 1, 2 # spherical coordinate indices
+CART, CYL, SPH = 0, 1, 2 # coordinate systems
 ALPHA_EPS0P01, ALPHA_EPS0P1, ALPHA_EPS1P0, DMO, GAS = 0, 1, 2, 3, 4
 HYDRO, DM, STAR = 0, 1, 2
 epsilon = 1e-30 # small number
@@ -71,36 +74,48 @@ def clear_figures():
 
 
 def save_fig(fig_name, filetype="png", dpi=300):
-        '''
-        Save the current matplotlib figure.
+    '''
+    Save the current matplotlib figure.
 
-        Args
-        name (string): figure name
-        filetype (string): file type
-        dpi (int): dots per inch
-        '''
-        datetime_string = datetime.now().strftime("%m%d%Y%H%M")
-        filename = "%s-%s.%s" % (fig_name, datetime_string, filetype)
-        plt.savefig(os.path.join(save_dir, "all", filename), bbox_inches="tight", dpi=dpi)
-        print("Saved figure as '%s'" % filename)
-        
-        
-def calc_fft(x, y):
-    '''
-    Compute the Fourier transform of an array.
-    
     Args
-    x: array of values at which y is sampled, must be uniform
-    y: array to Fourier transform
-    
-    Returns
-    x_fft: array of frequencies at which y_fft is sampled
-    y_fft: Fourier transform of y
+    name (string): figure name
+    filetype (string): file type
+    dpi (int): dots per inch
     '''
-    y_fft = np.fft.rfft(y)
-    x_fft = np.fft.rfftfreq(y.size, d=np.diff(x)[0])
+    datetime_string = datetime.now().strftime("%m%d%Y%H%M")
+    filename = "%s-%s.%s" % (fig_name, datetime_string, filetype)
+    plt.savefig(os.path.join(save_dir, "all", filename), bbox_inches="tight", dpi=dpi)
+    print("Saved figure as '%s'" % filename)
+        
+        
+def calc_norm(a):
+    ''' Compute the norm of a vector. '''
+    return np.sqrt(np.sum(a**2, axis=0))
+
+
+def calc_dot(a, b):
+    ''' Compute the dot product of two vectors '''
+    return np.sum(a * b, axis=0)
+
+
+def calc_proj(a, b, do_norm=True):
+    ''' Compute the projection of one vector onto another '''
+    if do_norm:
+        return calc_dot(a, b) / calc_norm(b)
+    else:
+        return (calc_dot(a, b) / calc_norm(b)**2)[None, :, :, :] * b
     
-    return x_fft, y_fft
+
+def symlog(x, C=1):
+    ''' Compute the symmetric log '''
+    return np.sign(x) * np.log10(1 + np.abs(x / C))
+
+
+def solve_quadratic(A, B, C):
+    ''' Solve a quadratic equation '''
+    x1 = (-B + np.sqrt(B**2 - 4 * A * C)) / (2 * A)
+    x2 = (-B - np.sqrt(B**2 - 4 * A * C)) / (2 * A)
+    return x1, x2
 
 
 def calc_AH_coords(h, ph):
@@ -121,7 +136,134 @@ def calc_AH_coords(h, ph):
     AH2 = np.sin(h_bar) / np.sqrt(1 + np.cos(h_bar) * np.cos(lamb / 2))
     
     return AH1, AH2
+
+
+def coord_conv(coord, sys1, sys2):
+    '''
+    Convert a coordinate array from one coordinate system to another.
+    See Wikipedia (https://en.wikipedia.org/wiki/Del_in_cylindrical_and_spherical_coordinates) for formulas.
     
+    Args
+    coord: coordinate array
+    sys1 (int): coordinate system of coord
+    sys2 (int): new coordinate array
+    
+    Returns
+    coord_new: coordinate array in the new coordinate system
+    '''
+    assert sys1 in [CART, CYL, SPH], "Argmument sys1 is not a valid coordinate system."
+    assert sys2 in [CART, CYL, SPH], "Argmument sys2 is not a valid coordinate system."
+    
+    coord_new = np.zeros_like(coord)
+    
+    if sys2 == sys1:
+        
+        coord_new = np.copy(coord)
+    
+    elif sys1 == CART and sys2 == SPH:
+        
+        coord_new[R] = np.sqrt(np.sum(coord**2, axis=0))
+        coord_new[H] = np.arctan2(np.sqrt(coord[X]**2 + coord[Y]**2), coord[Z])
+        coord_new[PH] = np.arctan2(coord[Y], coord[X])
+        
+    elif sys1 == CART and sys2 == CYL:
+        
+        coord_new[S] = np.sqrt(coord[X]**2 + coord[Y]**2),
+        coord_new[PH2] = np.arctan2(self.coord[Y], self.coord[X])
+        coord_new[Z] = coord[Z]
+        
+    elif sys1 == SPH and sys2 == CART:
+        
+        coord_new[X] = coord[R] * np.cos(coord[PH]) * np.sin(coord[H])
+        coord_new[Y] = coord[R] * np.sin(coord[PH]) * np.sin(coord[H])
+        coord_new[Z] = coord[R] * np.cos(coord[H])
+        
+    elif sys1 == SPH and sys2 == CYL:
+        
+        coord_new[S] = coord[R] * np.sin(coord[H])
+        coord_new[PH2] = coord[PH]
+        coord_new[Z] = coord[R] * np.cos(coord[H])
+        
+    elif sys1 == CYL and sys2 == CART:
+        
+        coord_new[X] = coord[R] * np.cos(coord[PH2])
+        coord_new[Y] = coord[R] * np.sin(coord[PH2])
+        coord_new[Z] = coord[Z]
+        
+    elif sys1 == CYL and sys2 == SPH:
+        
+        coord_new[R] = np.sqrt(coord[S]**2 + coord[Z]**2)
+        coord_new[H] = np.arctan2(coord[S] / coord[Z])
+        coord_new[PH] = coord[PH2]
+        
+    return coord_new
+
+
+def vec_conv(self, field, coord, sys1, sys2):
+    '''
+    Convert a vector gield array from one coordinate system to another.
+    See Wikipedia (https://en.wikipedia.org/wiki/Del_in_cylindrical_and_spherical_coordinates) for formulas.
+    
+    Args
+    field: field
+    coord: coordinate array
+    sys1 (int): coordinate system of coord and field
+    sys2 (int): new coordinate array
+    
+    Returns
+    coord_new: coordinate array in the new coordinate system
+    '''    
+    assert sys1 in [CART, CYL, SPH], "Argmument sys1 is not a valid coordinate system."
+    assert sys2 in [CART, CYL, SPH], "Argmument sys2 is not a valid coordinate system."
+    
+    field_new = np.zeros_like(field)
+    
+    if sys1 == sys2:
+        
+        field_new = np.copy(field)
+        
+    elif sys1 == CART and sys2 == SPH:
+    
+        coord_s = np.sqrt(coord[X]**2 + coord[Y]**2)
+        coord_r = np.sqrt(np.sum(coord**2, axis=0))
+        field_new[R] = np.sum(coord * field, axis=0) / coord_r
+        field_new[H] = ((coord[X] * field[X] + coord[Y] * field[Y]) * coord[Z] - coord_s**2 * field[Z]) / (coord_r * coord_s)
+        field_new[PH] = (-coord[Y] * field[X] + coord[X] * field[Y]) / coord_s
+        
+    elif sys1 == CART and sys2 == CYL:
+        
+        coord_s = np.sqrt(coord[X]**2 + coord[Y]**2)
+        field_new[S] = (coord[X] * field[X] + coord[Y] * field[Y]) / coord_s
+        field_new[PH2] = (-coord[Y] * field[X] + coord[X] * field[Y]) / coord_s
+        field_new[Z] = field[Z]
+        
+    elif sys1 == SPH and sys2 == CART:
+        
+        field_new[X] = np.sin(coord[H]) * np.cos(coord[PH]) * field[R] + np.cos(coord[H]) * np.cos(coord[PH]) * field[H] - np.sin(coord[PH]) * field[PH]
+        field_new[Y] = np.sin(coord[H]) * np.sin(coord[PH]) * field[R] + np.cos(coord[H]) * np.sin(coord[PH]) * field[H] - np.cos(coord[PH]) * field[PH]
+        field_new[Z] = np.cos(coord[H]) * field[R] - np.sin(coord[PH]) * field[H]
+        
+    elif sys1 == SPH and sys2 == CYL:
+        
+        field_new[S] = np.sin(coord[H]) * field[R] + np.cos(coord[H]) * field[H]
+        field_new[PH2] = field[PH]
+        field_new[Z] = np.cos(coord[H]) * field[R] - np.sin(coord[H]) * field[H]
+        
+    elif sys1 == CYL and sys2 == CART:
+        
+        field_new[X] = np.cos(field[PH2]) * field[S] - np.sin(coord[PH2]) * field[PH2]
+        field_new[Y] = np.sin(field[PH2]) * field[S] + np.cos(coord[PH2]) * field[PH2]
+        field_new[Z] = field[Z]
+        
+    elif sys1 == CYL and sys2 == SPH:
+        
+        coord_r = np.sqrt(coord[S]**2 + coord[Z]**2)
+        field_new[R] = (coord[S] * field[S] + coord[Z] * field[Z]) / coord_r
+        field_new[H] = (coord[Z] * field[S] - coord[S] * field[Z]) / coord_r
+        field_new[PH] = field[PH2]
+    
+    return field_new
+        
     
 class Sim(object):
     '''
@@ -233,72 +375,51 @@ class Sim(object):
         for var_name in data:
             setattr(self, var_name, data[var_name])
             
-        # see https://en.wikipedia.org/wiki/Del_in_cylindrical_and_spherical_coordinates for coordinate and unit vector conversions
-        self.coord_cyl_at_cart = np.array([
-            np.sqrt(self.coord[X]**2 + self.coord[Y]**2),
-            np.arctan2(self.coord[Y], self.coord[X]),
-            self.coord[Z]
-        ])
-        self.coord_sph_at_cart = np.array([
-            np.sqrt(np.sum(self.coord**2, axis=0)),
-            np.arctan2(self.coord_cyl_at_cart[S], self.coord[Z]),
-            np.arctan2(self.coord[Y], self.coord[X])
-        ])
-        self.vel_vec_sph_at_cart = np.array([
-            np.sum(self.coord * self.vel_vec, axis=0) / self.coord_sph_at_cart[R],
-            ((self.coord[X] * self.vel_vec[X] + self.coord[Y] * self.vel_vec[Y]) * self.coord[Z] - self.coord_cyl_at_cart[S]**2 * self.vel_vec[Z]) / (self.coord_sph_at_cart[R] * self.coord_cyl_at_cart[S]),
-            (-self.coord[Y] * self.vel_vec[X] + self.coord[X] * self.vel_vec[Y]) / self.coord_cyl_at_cart[S]
-        ])
-        self.dA = self.dx**2
+        self.epsilon_SF = epsilon_SF
         
-        self.coord_r_1d = np.linspace(0, np.max(self.coord1d), self.N // 2)
-        self.coord_h_1d = np.linspace(0, np.pi, self.N // 2)
-        self.coord_ph_1d = np.linspace(0, 2 * np.pi, self.N)
-        self.coord_sph = np.array(np.meshgrid(self.coord_r_1d, self.coord_h_1d, self.coord_ph_1d, indexing='ij'))
-        self.dr = np.diff(self.coord_r_1d)[0]
-        self.dh = np.diff(self.coord_h_1d)[0]
-        self.dph = np.diff(self.coord_ph_1d)[0]
-        self.coord_cart_at_sph = np.array([
-            self.coord_sph[R] * np.cos(self.coord_sph[PH]) * np.sin(self.coord_sph[H]),
-            self.coord_sph[R] * np.sin(self.coord_sph[PH]) * np.sin(self.coord_sph[H]),
-            self.coord_sph[R] * np.cos(self.coord_sph[H])
-        ])
-        self.coord_AH_at_sph = np.array(calc_AH_coords(self.coord_sph[H, 0], self.coord_sph[PH, 0]))
-        self.dA_hph = self.coord_sph[R]**2 * np.sin(self.coord_sph[H]) * self.dh * self.dph
+        self.mass_unit = self.density_unit * self.length_unit**3
+        self.velocity_unit = self.length_unit / self.time_unit
+        self.energy_unit = self.mass_unit * self.velocity_unit**2
+        self.energy_density_unit = self.density_unit * self.velocity_unit**2
+        
+        amr_level = 13
+        box_size = 2 * const.kpc / length_unit
+        left_edge = halo.xyz - box_size/2
+        N = int(box_size * ds.domain_dimensions[0] * 2**amr_level)
 
-        self.n_H = const.X_cosmo * self.density / const.m_H
-        self.v_turb = np.sqrt(2 * self.turb_energy)
-        self.star_age = self.current_time - self.star_birth_time
+        self.dx = np.diff(self.coord[X])[0]
+        self.dA = self.dx**2
+        self.dV = self.dx**3
+            
+        self.redshift = 1 / self.a_exp - 1
+        H = self.H0 * np.sqrt(self.Omega_m0 / self.a_exp**3 + self.Omega_k0 / self.a_exp**2 + self.Omega_L0)
+        self.rho_crit = 3 * self.H**2 / (8 * np.pi * const.G)
+        self.current_time = self.a_exp_to_proper_time(self.a_exp)
+        
+        self.create_sph_grid()
+        
         self.gamma = 5/3
-        self.c_s = np.sqrt(self.gamma * self.pressure / self.density)
-        self.mach = self.vel / self.c_s
-        self.v_turb_1d = self.v_turb / np.sqrt(3)
-        self.mach_turb = self.v_turb_1d / self.c_s
-        self.alpha_vir = 15 / np.pi * self.c_s**2 * (1 + self.mach_turb**2) / (const.G * self.density * self.dA)
-        self.t_ff = np.sqrt(3 * np.pi / (32 * const.G * self.density))
-        self.n_dust = self.metallicity * self.n_H
-        self.n_dust[self.temperature > const.T_HII] = 0
-
-        if epsilon_SF == None:
-            '''
-            See Federrath&Klessen2012 (https://arxiv.org/pdf/1209.2856.pdf) and Kretschmer&Teyssier2021 (https://arxiv.org/pdf/1906.11836.pdf) for details.
-            b varies smoothly between b ~ 1/3 for purely solenoidal (divergence-free) forcing 
-            and b ~ 1 for purely compressive (curl-free) forcing of the turbulence
-            A stochastic mixture of forcing modes in 3-d space leads to b ~ 0.4
-            '''
-            b = 0.4 # turbulence forcing parameter
-            s_crit = np.log(self.alpha_vir * (1 + (2 * self.mach_turb**4) / (1 + self.mach_turb**2))) # lognormal critical density for star formation
-            sigma_s = np.sqrt(np.log(1 + b**2 * self.mach_turb**2)) # standard deviation of the lognormal subgrid density distribution
-            self.epsilon_SF = 1/2 * np.exp(3/8 * sigma_s**2) * (1 + erf((sigma_s**2 - s_crit) / np.sqrt(2 * sigma_s**2))) # star formation efficiency
-            self.SFR_density = self.epsilon_SF * self.density / self.t_ff
-        else:
-            self.epsilon_SF = epsilon_SF
-            self.SFR_density = self.epsilon_SF * self.density / self.t_ff
-            # not correctly implemented; need density criterion for SF; why is alpha_vir so big when it is unitless?
+        self.epsilon_SF = epsilon_SF
+        self.alpha_vir_crit = 10.
             
         self.summary_stats = {}
             
             
+    def create_sph_grid(self):
+        '''
+        Create a grid in spherical coordinates.
+        '''
+        self.coord1d_sph = np.array([
+            np.linspace(0, np.max(self.coord1d), self.N),
+            np.linspace(0, np.pi, self.N),
+            np.linspace(0, 2 * np.pi, self.N)
+        ])
+        self.coord_sph = np.array(np.meshgrid(self.coord_r_1d, self.coord_h_1d, self.coord_ph_1d, indexing='ij'))
+        self.dx_sph = np.diff(self.coord1d_sph, axis=-1)[:, 0]
+        self.coord_AH_at_sph = np.array(calc_AH_coords(self.coord_sph[H, self.N//2], self.coord_sph[PH, self.N//2]))
+        self.dA_hph = self.coord_sph[R]**2 * np.sin(self.coord_sph[H]) * self.dh * self.dph
+    
+    
     def save_fig(self, fig_name, filetype="png", dpi=300):
         '''
         Save the current matplotlib figure.
@@ -632,4 +753,107 @@ class Sim(object):
             for field, stats in self.summary_stats.items():
                 table.append([field, "%.3g" % stats['max'], "%.3g" % stats['min'], "%.3g" % stats['mean'], stats['unit']])
             print(tabulate(table, headers=['Field', 'Max', 'Min', 'Mean', 'Unit']))
+    
+    @cached_property
+    def coord_cyl_at_cart(self):
+        ''' Cylindrical coordinates on the Cartesian grid.'''
+        return coord_conv(self.coord, sys1=CART, sys2=CYL)
+    
+    @cached_property
+    def coord_sph_at_cart(self):
+        ''' Cylindrical coordinates on the Cartesian grid.'''
+        return coord_conv(self.coord, sys1=CART, sys2=SPH)
+    
+    @cached_property
+    def coord_cart_at_sph(self):
+        ''' Cartesian coordinates on the spherical grid.'''
+        return coord_conv(self.coord_sph, sys1=SPH, sys2=CART)
+    
+    @cached_property
+    def coord_cyl_at_sph(self):
+        ''' Cylindrical coordinates on the spherical grid.'''
+        return coord_conv(self.coord_sph, sys1=SPH, sys2=CYL)
+    
+    @cached_property
+    def vel_vec_sph_at_cart(self):
+        ''' Velocity vector in spherical coordinates on the Cartesian grid '''
+        return vec_conv(self.vel_vec, self.coord, sys1=CART, sys2=SPH)
+    
+    @cached_property
+    def star_age(self):
+        ''' Star age '''
+        return self.current_time - self.star_birth_time
+    
+    @cached_property
+    def n_H(self):
+        ''' Hydrogen number density '''
+        return const.X_cosmo * self.density / const.m_H
+    
+    @cached_property
+    def n_dust(self):
+        ''' Dust number density '''
+        n_dust = self.metallicity * self.n_H * (1 - self.ion_frac)
+        n_dust[self.temperature > const.T_HII] = 0
+        return n_dust
+    
+    @cached_property
+    def v_turb(self):
+        ''' Turbulent velocity '''
+        return np.sqrt(2 * self.turb_energy)
+    
+    @cached_property
+    def c_s(self):
+        ''' Sound speed '''
+        return np.sqrt(self.gamma * self.pressure / self.density)
+    
+    @cached_property
+    def mach(self):
+        ''' Mach number '''
+        return self.vel / self.c_s
+    
+    @cached_property
+    def mach_turb(self):
+        ''' Turbulent mach number '''
+        return self.v_turb / self.c_s / np.sqrt(3)
+    
+    @cached_property
+    def alpha_vir(self):
+        ''' Virial parameter '''
+        return 15 / np.pi * self.c_s**2 * (1 + self.mach_turb**2) / (const.G * self.density * self.dA)
+    
+    @cached_property
+    def ion_frac(self):
+        ''' 
+        Ionization fraction (n_HII / n_H).
+        
+        Estimated by solving the Saha equation.
+        '''
+        lamb_dB = np.sqrt(const.h**2 / (2 * np.pi * const.m_e * const.k_B * self.temperature)) # thermal deBroglie wavelength
+        g0, g1 = 2, 1 # statistical weights
+        A = 1
+        B = (2 / (self.n_H * lamb_dB**3)) * (g1 / g0) * np.exp(-const.E_HII / (const.k_B * self.temperature))
+        C = -B
+        ion_frac = solve_quadratic(A, B, C)[0]
+        return ion_frac
+    
+    @cached_property
+    def SFR_density(self):
+        '''
+        Star formation rate density.
 
+        For the multi-fallback model (epsilon_SF = None), see Federrath&Klessen2012 (https://arxiv.org/pdf/1209.2856.pdf) and Kretschmer&Teyssier2021 (https://arxiv.org/pdf/1906.11836.pdf) for details.
+        The turbulence forcing parameter b varies smoothly between b ~ 1/3 for purely solenoidal (divergence-free) forcing 
+        and b ~ 1 for purely compressive (curl-free) forcing of the turbulence.
+        A stochastic mixture of forcing modes in 3-d space leads to b ~ 0.4.
+        '''
+        t_ff = np.sqrt(3 * np.pi / (32 * const.G * self.density)) # free-fall time
+        if self.epsilon_SF == None:
+            b = 0.4 # turbulence forcing parameter
+            s_crit = np.log(self.alpha_vir * (1 + (2 * self.mach_turb**4) / (1 + self.mach_turb**2))) # lognormal critical density for star formation
+            sigma_s = np.sqrt(np.log(1 + b**2 * self.mach_turb**2)) # standard deviation of the lognormal subgrid density distribution
+            self.epsilon_SF = 1/2 * np.exp(3/8 * sigma_s**2) * (1 + erf((sigma_s**2 - s_crit) / np.sqrt(2 * sigma_s**2))) # star formation efficiency
+            SFR_density = self.epsilon_SF * self.density / self.t_ff
+        else:
+            SFR_density = self.epsilon_SF * self.density / self.t_ff
+            SFR_density[self.alpha_vir < self.alpha_vir_crit] = 0.
+        return SFR_density
