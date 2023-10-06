@@ -1,6 +1,21 @@
 '''
-Units and physical constants
+Units and physical constants.
 '''
+
+# units
+m = 100 # meter [cm]
+km = 1000 * m # kilometer [cm]
+pc = 3.086e+18 # parsec [cm]
+kpc = 1000 * pc # kiloparsec [cm]
+Mpc = 1e6 * pc # megaparsec [cm]
+hr = 3600 # hour [s]
+day = 24 * hr # day [s]
+yr = 365 * day # year [s]
+Myr = 1e6 * yr # megayear [s]
+Gyr = 1e9 * yr # gigayear [s]
+ly = 9.463e17 # lightyear [cm]
+
+# physical constants
 c = 2.99792458e10 # speed of light [cm/s]
 h = 6.6260755e-27 # plank constant [erg/s]
 hbar = 1.05457266e-27 # reduced plank constant [erg/s]
@@ -19,22 +34,12 @@ sigma_SB = 5.67051e-5 # stefan-boltzmann constant [erg/cm^2/K^4/s]
 alpha = 7.29735308e-3 # fine-structure constant
 Ry = 2.1798741e-11 # rydberg constant [erg]
 
-m = 100 # meter [cm]
-km = 1000 * m # kilometer [cm]
-pc = 3.086e+18 # parsec [cm]
-kpc = 1000 * pc # kiloparsec [cm]
-Mpc = 1e6 * pc # megaparsec [cm]
-hr = 3600 # hour [s]
-day = 24 * hr # day [s]
-yr = 365 * day # year [s]
-Myr = 1e6 * yr # megayear [s]
-Gyr = 1e9 * yr # gigayear [s]
-ly = 9.463e17 # lightyear [cm]
+# other useful quantities
 M_sol = 1.99e33 # solar mass [g]
 R_sol = 6.96e10 # solar radius [cm]
 L_sol = 3.9e33 # solar luminosity [erg/s]
 T_sol = 5.780e3 # solar temperature [L]
 X_sol, Y_sol, Z_sol = 0.7381, 0.2485, 0.0134 # solar abundances
 X_cosmo, Y_cosmo, Z_cosmo = 0.7515, 0.2485, 0. # cosmological abundances
-T_HII = 1e4 # hydrogen ionization temperature [Kelvin]
-E_HII = 13.59844 * eV # hydrogen ionization energy [erg]
+temp_HII = 1e4 # hydrogen ionization temperature [Kelvin]
+energy_HII = 13.59844 * eV # hydrogen ionization energy [erg]

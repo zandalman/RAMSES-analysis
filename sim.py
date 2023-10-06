@@ -1,21 +1,4 @@
-import os, subprocess, warnings
-from datetime import datetime
-from tabulate import tabulate
-
-import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib.lines import Line2D
-
-from datetime import datetime
-from scipy.integrate import quad, quad_vec, trapz, cumtrapz
-from scipy.optimize import fsolve
-from scipy.ndimage import gaussian_filter
-from scipy.special import erf
-from scipy.interpolate import griddata, interpn
-
-from functools import cached_property
-
-import const
+from modules import *
 
 X, Y, Z = 0, 1, 2 # cartesian coordinate indices
 S, PH2, Z = 0, 1, 2 # cylindrical coordinate indices
@@ -199,7 +182,7 @@ def coord_conv(coord, sys1, sys2):
     return coord_new
 
 
-def vec_conv(self, field, coord, sys1, sys2):
+def vec_conv(field, coord, sys1, sys2):
     '''
     Convert a vector gield array from one coordinate system to another.
     See Wikipedia (https://en.wikipedia.org/wiki/Del_in_cylindrical_and_spherical_coordinates) for formulas.
@@ -271,15 +254,20 @@ class Sim(object):
     
     Args
     sim_idx (int): index of the simulation (ALPHA_EPS0P01, ALPHA_EPS0P1, ALPHA_EPS1P0, DMO, GAS)
-    npz_file (str): filename of the npz file with the sim data
+    npz_file (str): filename of the npz file with the simulation data
     
     Attrs
     
+    cond_hydro: conditional array to select a specific region for hydro fields
+    cond_dm: conditional array to select a specific region for dark matter fields
+    cond_star: conditional array to select a specific region for star fields
+
     halo_idx (int): index of the halo
     halo_mass (float): mass of the halo
     a_exp (float): expansion factor
     redshift (float): redshift
-    current_time (float): proper time
+    time_now (float): proper time
+    universe_age (float): age of the Universe (i.e. proper time at a_exp = 1)
     
     H0 (float): Hubble constant at z=0
     Omega_m0 (float): mass density parameter at z=0
@@ -297,32 +285,57 @@ class Sim(object):
     energy_unit (float): erg per code unit of energy
     energy_density_unit (float): erg/cm^3 per code unit of energy density
     
-    amr_level (int): number of AMR levels in the simulation
-    box_size (float): simulation box size in code units of length
-    left_edge: array of coordinate of the left corner of the simulation box in code units of length
+    ref_crit: refinement criterion
+    contamination_frac: contamination fraction of high mass dark matter particles (cached property)
+    max_amr_level (int): max AMR level of data read from yt
+    box_size (float): simulation box size
+    left_edge: array of coordinate of the left corner of the simulation box
     N (int): array size
-    dx (float): length element
-    dV (float): volume element
     
-    dm_coord: array of dark matter particle coordinates
-    dm_mass: array of dark matter particles masses
-    star_coord: array of star particle coordinates
-    star_mass: array of star particle masses
-    star_birth_time: array of star particle birth times
     coord: coordinate array
     coord1d: 1d coordinate array
-    r: radial coordinate array
-    r_dm: array of radial coordinates of dark matter particles
-    r_star: array of radial coordinates of star matter particles
+    dx (float): length element
+    dA (float): area element
+    dV (float): volume element
+    coord_cyl_at_cart: cylindrical coordinates on the Cartesian grid (cached property)
+    coord_sph_at_cart: spherical coordinate on the Cartesian grid (cached property)
     
-    density: array of densities
-    metallicity: array of metallicities
-    pressure: array of pressures
-    turb_energy: array of turbulent energies
-    refinement_criterion: array of refinement criteria
-    vel_vec: array of velocity vectors
-    temperature: array of temperatures
-    vel: array of velocity magnitudes
+    coord_sph: spherical coordinate array
+    coord1d_sph: 1d spherical coordinate array
+    dx_sph: spherical coordinate length elements
+    dA_hph: theta-phi area element
+    coord_AH_at_sph: Aitoff-Hammer projection coordinates on the spherical grid
+    coord_cart_at_sph: Cartesian coordinates on the spherical grid (cached property)
+    coord_cyl_at_sph: cylindrical coordinates on the spherical grid (cached property)
+    
+    coord_dm: coordinates of dark matter particles
+    coord_sph_dm: spherical coordinates of dark matter particles (cached property)
+    mass_dm: dark matter particle masses
+    
+    coord_star: coordinates of star particles
+    coord_sph_star: spherical coordinates of star particles
+    mass_star: star particle masses
+    time_starbirth: star particle birth times
+    age_star: star particle ages
+    
+    density: density
+    n_H: Hydrogen number density (cached property)
+    n_dust: Dust number density (cached property)
+    metallicity: metallicity
+    pressure: pressure
+    energy_turb: turbulent energy
+    temp: temp (cached property)
+    c_s: sound speed (cached property)
+    mach: Mach number (cached property)
+    mach_turb: turbulent Mach number (cached property)
+    alpha_vir: virial parameter (cached property)
+    ion_frac: ionization fraction (cached property)
+    SFR_density: star formation rate density (cached property)
+    
+    vel_vec: velocity vector
+    vel_vec_sph_at_cart: velocity vector in spherical coordinates on the Cartesian grid (cached property)
+    vel: magnitude of the velocity (cached property)
+    vel_turb: turbulent velocity (cached property)
     
     sim_idx (int): index of the simulation
     sim_name (str): name of the simulation
@@ -331,25 +344,13 @@ class Sim(object):
     save_dir (str): path of the directory to save figures
     npz_file (str): name of the npz file
     
-    dA (float): area element
-    coord_r_1d: 1d radial coordinate array
-    coord_h_1d: 1d polar coordinare array
-    coord_ph_1d: 1d azimuthal coordinate array
-    coord_sph: spherical coordinate array
-    dr (float): radial coordinate element
-    dh (float): polar coordinate element
-    dph (float): azimuthal coordinate element
-    coord_card_at_sph: cartesian coordinate array at spherical coordinate grid points
-    coord_AH_at_sph: Aitoff-Hammer projection coordinate array at spherical coordinate grid points
-    dA_hph: array of spherical area elements
-    
     n_H: array of hydrogen number densities
-    v_turb: array of turbulent velocities
-    star_age: array of ages of star particles
+    vel_turb: array of turbulent velocities
+    age_star: array of ages of star particles
     gamma (float): adiabatic index
     c_s: array of sound speeds
     mach: array of Mach numbers
-    v_turb_1d: array of one-dimensional turbulent velocities
+    vel_turb_1d: array of one-dimensional turbulent velocities
     mach_turb: array of turbulent mach numbers
     alpha_vir: array of virial parameters
     t_ff: array of freefall times
@@ -370,55 +371,38 @@ class Sim(object):
         os.chdir(self.sim_dir)
         print("Moving to directory '%s'." % self.sim_dir)
         
+        self.epsilon_SF = epsilon_SF
+        self.alpha_vir_crit = 10.
+        self.gamma = 5/3
+        
         self.npz_file = npz_file
         data = np.load(self.npz_file)
         for var_name in data:
             setattr(self, var_name, data[var_name])
-            
-        self.epsilon_SF = epsilon_SF
         
-        self.mass_unit = self.density_unit * self.length_unit**3
-        self.velocity_unit = self.length_unit / self.time_unit
-        self.energy_unit = self.mass_unit * self.velocity_unit**2
-        self.energy_density_unit = self.density_unit * self.velocity_unit**2
-        
-        amr_level = 13
-        box_size = 2 * const.kpc / length_unit
-        left_edge = halo.xyz - box_size/2
-        N = int(box_size * ds.domain_dimensions[0] * 2**amr_level)
-
-        self.dx = np.diff(self.coord[X])[0]
+        self.coord1d = np.array([
+            self.coord[X, :, self.N//2, self.N//2], 
+            self.coord[Y, self.N//2, :, self.N//2], 
+            self.coord[Z, self.N//2, self.N//2, :]
+        ])
+        self.dx = np.diff(self.coord1d[X])[0]
         self.dA = self.dx**2
         self.dV = self.dx**3
             
         self.redshift = 1 / self.a_exp - 1
-        H = self.H0 * np.sqrt(self.Omega_m0 / self.a_exp**3 + self.Omega_k0 / self.a_exp**2 + self.Omega_L0)
+        self.H = self.H0 * np.sqrt(self.Omega_m0 / self.a_exp**3 + self.Omega_k0 / self.a_exp**2 + self.Omega_L0)
         self.rho_crit = 3 * self.H**2 / (8 * np.pi * const.G)
-        self.current_time = self.a_exp_to_proper_time(self.a_exp)
+        self.time_now = self.a_exp_to_proper_time(self.a_exp)
+        self.universe_age = self.a_exp_to_proper_time(1.)
         
+        self.time_starbirth = (self.tau_starbirth / self.H0 + self.universe_age)
+        self.age_star = self.time_now - self.time_starbirth
+        
+        self.cond_hydro = (self.density >= 0)
+        self.cond_dm = (self.mass_dm >= 0)
+        self.cond_star = (self.mass_star >= 0)
+
         self.create_sph_grid()
-        
-        self.gamma = 5/3
-        self.epsilon_SF = epsilon_SF
-        self.alpha_vir_crit = 10.
-            
-        self.summary_stats = {}
-            
-            
-    def create_sph_grid(self):
-        '''
-        Create a grid in spherical coordinates.
-        '''
-        self.coord1d_sph = np.array([
-            np.linspace(0, np.max(self.coord1d), self.N),
-            np.linspace(0, np.pi, self.N),
-            np.linspace(0, 2 * np.pi, self.N)
-        ])
-        self.coord_sph = np.array(np.meshgrid(self.coord_r_1d, self.coord_h_1d, self.coord_ph_1d, indexing='ij'))
-        self.dx_sph = np.diff(self.coord1d_sph, axis=-1)[:, 0]
-        self.coord_AH_at_sph = np.array(calc_AH_coords(self.coord_sph[H, self.N//2], self.coord_sph[PH, self.N//2]))
-        self.dA_hph = self.coord_sph[R]**2 * np.sin(self.coord_sph[H]) * self.dh * self.dph
-    
     
     def save_fig(self, fig_name, filetype="png", dpi=300):
         '''
@@ -434,46 +418,50 @@ class Sim(object):
         plt.savefig(os.path.join(self.save_dir, filename), bbox_inches="tight", dpi=dpi)
         print("Saved figure as '%s'" % filename)
         
-
+    def create_sph_grid(self):
+        '''
+        Create a grid in spherical coordinates.
+        '''
+        self.coord1d_sph = np.array([
+            np.linspace(0, np.max(self.coord1d), self.N),
+            np.linspace(0, np.pi, self.N),
+            np.linspace(0, 2 * np.pi, self.N)
+        ])
+        self.coord_sph = np.array(np.meshgrid(self.coord1d_sph[R], self.coord1d_sph[H], self.coord1d_sph[PH], indexing='ij'))
+        self.dx_sph = np.diff(self.coord1d_sph, axis=-1)[:, 0]
+        self.coord_AH_at_sph = np.array(calc_AH_coords(self.coord_sph[H, self.N//2], self.coord_sph[PH, self.N//2]))
+        self.dA_hph = self.coord_sph[R]**2 * np.sin(self.coord_sph[H]) * self.dx_sph[H] * self.dx_sph[PH]
+    
     def a_exp_to_proper_time(self, a):
         '''Convert expansion factor to proper time.'''
         integrand = lambda a: (self.Omega_m0 * a**(-1) + self.Omega_k0 + self.Omega_L0 * a**2)**(-1/2)
         t = quad(integrand, 0, a)[0] / self.H0
-
         return t
-
 
     def a_exp_to_conformal_time(self, a):
         '''Convert expansion factor to conformal time.'''
         integrand = lambda a: (self.Omega_m0 * a + self.Omega_k0 * a**2 + self.Omega_L0 * a**4)**(-1/2)
         tau = const.c * quad(integrand, 0, a)[0] / self.H0
-
         return tau
-
 
     def proper_time_to_a_exp(self, t):
         '''Convert proper time to expansion rate.'''
         a = fsolve(lambda a: (a_exp_to_proper_time(a) - t) * self.H0, self.a_exp)
-
         return a
-
 
     def conformal_time_to_a_exp(self, tau):
         '''Convert conformal time to expansion rate.'''
         a = fsolve(lambda a: (a_exp_to_conformal_time(a) - tau) * self.H0, self.a_exp)
-
         return a
-
 
     def interp_to_sph(self, field):
         ''' Interpolate a field to a spherical grid '''
         field_sph = interpn(self.coord1d, field, np.moveaxis(self.coord_cart_at_sph, 0, -1))
         return field_sph
     
-    
     def plot_slice(self, field, extrema, slice=Z, project=False, weight=None, cond=None, avg=True, width=None, do_log=True, slice_coord=None, nlevels=200, cmap='jet', cbar_label='field', cbar_tick_increment=None, plot_star=False, plot_dm=False, isocontours=None):
         '''
-        Plot a cross section of a field perpendicular to a coordinate axis.
+        Plot the cross section of a field perpendicular to a coordinate axis.
 
         Args
         field: field
@@ -574,9 +562,9 @@ class Sim(object):
 
         for i, axis_line_value in enumerate(np.arange(0, (num_axis_lines + 0.5) * np.pi / num_axis_lines, np.pi / num_axis_lines)):
 
-            AH1_h_axis_line, AH2_h_axis_line = calc_AH_coords(axis_line_value * np.ones_like(self.coord_ph_1d), self.coord_ph_1d)
+            AH1_h_axis_line, AH2_h_axis_line = calc_AH_coords(axis_line_value * np.ones_like(self.coord1d_sph[PH]), self.coord1d_sph[PH])
             plt.plot(AH1_h_axis_line, AH2_h_axis_line, color='black', lw=0.75)
-            AH1_ph_axis_line, AH2_ph_axis_line = calc_AH_coords(self.coord_h_1d, 2 * axis_line_value * np.ones_like(self.coord_h_1d))
+            AH1_ph_axis_line, AH2_ph_axis_line = calc_AH_coords(self.coord1d_sph[H], 2 * axis_line_value * np.ones_like(self.coord1d_sph[H]))
             plt.plot(AH1_ph_axis_line, AH2_ph_axis_line, color='black', lw=0.75)
 
             if axis_labels and i not in [0, num_axis_lines]:
@@ -584,7 +572,7 @@ class Sim(object):
                 h_label = r'$%d^\circ$' % int(np.round(axis_line_value * 180 / np.pi))
                 plt.annotate(h_label, (AH1_h_axis_line[0], AH2_h_axis_line[0]), xytext=(-3., 0), xycoords='data', textcoords='offset fontsize', rotation=0)
                 ph_label = r'$%d^\circ$' % int(np.round(axis_line_value * 360 / (np.pi)))
-                plt.annotate(ph_label, (AH1_ph_axis_line[self.N//4], AH2_ph_axis_line[self.N//4]), xytext=(0.3, -0.5), xycoords='data', textcoords='offset fontsize', rotation=90)
+                plt.annotate(ph_label, (AH1_ph_axis_line[self.N//2], AH2_ph_axis_line[self.N//2]), xytext=(0.3, -0.5), xycoords='data', textcoords='offset fontsize', rotation=90)
 
         plt.annotate(r'$\theta$', (0., 0.5), xytext=(-2.5, -0.25), xycoords='axes fraction', fontsize=20, textcoords='offset fontsize')
         plt.annotate(r'$\varphi$', (0.5, 0.), xytext=(-0.5, -1), xycoords='axes fraction', fontsize=20, textcoords='offset fontsize')
@@ -611,12 +599,12 @@ class Sim(object):
         if (r_lim == None) or (r_lim > self.box_size * self.length_unit / 2):
             r_lim = self.box_size * self.length_unit / 2
 
-        cond_sph = self.r < r_lim
+        cond_sph = self.coord_sph[R] < r_lim
         if np.all(cond) == None: cond = 1.
         if np.all(weight) == None: weight = 1.
 
-        counts1, bins = np.histogram(self.r[cond_sph].flatten(), weights=(field * weight * cond)[cond_sph].flatten(), bins=nbins)
-        counts2, bins = np.histogram(self.r[cond_sph].flatten(), weights=(np.ones_like(field) * weight * cond)[cond_sph].flatten(), bins=nbins)
+        counts1, bins = np.histogram(self.coord_sph[R][cond_sph].flatten(), weights=(field * weight * cond)[cond_sph].flatten(), bins=nbins)
+        counts2, bins = np.histogram(self.coord_sph[R][cond_sph].flatten(), weights=(np.ones_like(field) * weight * cond)[cond_sph].flatten(), bins=nbins)
 
         r_1d = bins[:-1] + np.diff(bins)[0]
         field_1d = counts1 / counts2
@@ -689,70 +677,6 @@ class Sim(object):
             mean = np.sum(field * weight * cond, axis=axis) / np.sum(np.ones_like(field) * weight * cond, axis=axis)
 
         return mean
-
-
-    def calc_contamination_frac(self, cond=None):
-        '''
-        Calculate the contamination fraction,
-        defined as the mass fraction of dark matter particles above the minimum dark particle mass
-
-        Args
-        cond: conditional array to select a specific region
-
-        Returns
-        contamination_frac: contamination fraction
-        '''
-        if np.all(cond) == None: cond = np.ones_like(self.dm_mass)
-
-        min_dm_mass = np.min(self.dm_mass[cond])
-        cond_not_min_dm_mass = self.dm_mass > min_dm_mass
-
-        contamination_frac = np.sum(self.dm_mass * cond * cond_not_min_dm_mass) / np.sum(self.dm_mass * cond)
-
-        return contamination_frac
-
-
-    def calc_summary_stats(self, fields, names, weights, units, types, cond_hydro=None, cond_dm=None, cond_star=None, do_print=True):
-        '''
-        Calculate summary statistics for a region
-
-        fields: list of fields to compute the min, max, and mean
-        names: list of field names, must be the same length as fields
-        weights: list of weights to use when computing field means, must be the same length as fields
-        units: list of unit strings, must be the same length as fields
-        types: list of field types (HYDRO, DM, STAR), must be the same length as fields
-        cond_hydro: conditional array to select a specific region for hydro fields
-        cond_dm: conditional array to select a specific region for dark matter fields
-        cond_star: conditional array to select a specific region for star fields
-        do_print (bool): print the summary stats
-        '''
-        for lst_name, lst in dict(names=names, weigts=weights, units=units, types=types).items():
-            assert len(lst) == len(fields), "Length of %s list should match length of fields list" % lst_name
-
-        if np.all(cond_hydro) == None: cond_hydro = (self.density >= 0)
-        if np.all(cond_dm) == None: cond_dm = (self.dm_mass >= 0)
-        if np.all(cond_star) == None: cond_star = (self.star_mass >= 0)
-        
-        for i, field in enumerate(fields):
-
-            cond = [cond_hydro, cond_dm, cond_star][types[i]]
-            if units[i] == None: units[i] = ""
-
-            min_field = np.min(field[cond])
-            max_field = np.max(field[cond])
-            mean_field = self.calc_mean(field, weight=weights[i], cond=cond)
-
-            self.summary_stats[names[i]] = dict(min=min_field, max=max_field, mean=mean_field, unit=units[i])
-
-        self.summary_stats["star part number"] = dict(min=0, max=0, mean=len(self.star_mass[cond_star]), unit="")
-        self.summary_stats["dark matter part number"] = dict(min=0, max=0, mean=len(self.dm_mass[cond_dm]), unit="")
-        self.summary_stats["contamination frac"] = dict(min=0, max=0, mean=self.calc_contamination_frac(cond=cond_dm), unit="")
-        
-        if do_print:
-            table = []
-            for field, stats in self.summary_stats.items():
-                table.append([field, "%.3g" % stats['max'], "%.3g" % stats['min'], "%.3g" % stats['mean'], stats['unit']])
-            print(tabulate(table, headers=['Field', 'Max', 'Min', 'Mean', 'Unit']))
     
     @cached_property
     def coord_cyl_at_cart(self):
@@ -775,14 +699,19 @@ class Sim(object):
         return coord_conv(self.coord_sph, sys1=SPH, sys2=CYL)
     
     @cached_property
+    def coord_sph_dm(self):
+        ''' Spherical coordinates of dark matter particles.'''
+        return coord_conv(self.coord_dm, sys1=CART, sys2=SPH)
+    
+    @cached_property
+    def coord_sph_star(self):
+        ''' Spherical coordinates of star particles.'''
+        return coord_conv(self.coord_star, sys1=CART, sys2=SPH)
+    
+    @cached_property
     def vel_vec_sph_at_cart(self):
         ''' Velocity vector in spherical coordinates on the Cartesian grid '''
         return vec_conv(self.vel_vec, self.coord, sys1=CART, sys2=SPH)
-    
-    @cached_property
-    def star_age(self):
-        ''' Star age '''
-        return self.current_time - self.star_birth_time
     
     @cached_property
     def n_H(self):
@@ -793,13 +722,23 @@ class Sim(object):
     def n_dust(self):
         ''' Dust number density '''
         n_dust = self.metallicity * self.n_H * (1 - self.ion_frac)
-        n_dust[self.temperature > const.T_HII] = 0
+        n_dust[self.temp > const.temp_HII] = 0
         return n_dust
     
     @cached_property
-    def v_turb(self):
+    def vel_turb(self):
         ''' Turbulent velocity '''
-        return np.sqrt(2 * self.turb_energy)
+        return np.sqrt(2 * self.energy_turb)
+    
+    @cached_property
+    def temp(self):
+        ''' Temperature '''
+        return self.pressure / self.density * const.m_H / const.k_B
+
+    @cached_property
+    def vel(self):
+        ''' Magnitude of the velocity '''
+        return calc_norm(self.vel_vec)
     
     @cached_property
     def c_s(self):
@@ -814,7 +753,7 @@ class Sim(object):
     @cached_property
     def mach_turb(self):
         ''' Turbulent mach number '''
-        return self.v_turb / self.c_s / np.sqrt(3)
+        return self.vel_turb / self.c_s / np.sqrt(3)
     
     @cached_property
     def alpha_vir(self):
@@ -828,12 +767,13 @@ class Sim(object):
         
         Estimated by solving the Saha equation.
         '''
-        lamb_dB = np.sqrt(const.h**2 / (2 * np.pi * const.m_e * const.k_B * self.temperature)) # thermal deBroglie wavelength
+        lamb_dB = np.sqrt(const.h**2 / (2 * np.pi * const.m_e * const.k_B * self.temp)) # thermal deBroglie wavelength
         g0, g1 = 2, 1 # statistical weights
         A = 1
-        B = (2 / (self.n_H * lamb_dB**3)) * (g1 / g0) * np.exp(-const.E_HII / (const.k_B * self.temperature))
+        B = (2 / (self.n_H * lamb_dB**3)) * (g1 / g0) * np.exp(-const.energy_HII / (const.k_B * self.temp))
         C = -B
         ion_frac = solve_quadratic(A, B, C)[0]
+        ion_frac[ion_frac > 1] = 1.
         return ion_frac
     
     @cached_property
@@ -852,8 +792,85 @@ class Sim(object):
             s_crit = np.log(self.alpha_vir * (1 + (2 * self.mach_turb**4) / (1 + self.mach_turb**2))) # lognormal critical density for star formation
             sigma_s = np.sqrt(np.log(1 + b**2 * self.mach_turb**2)) # standard deviation of the lognormal subgrid density distribution
             self.epsilon_SF = 1/2 * np.exp(3/8 * sigma_s**2) * (1 + erf((sigma_s**2 - s_crit) / np.sqrt(2 * sigma_s**2))) # star formation efficiency
-            SFR_density = self.epsilon_SF * self.density / self.t_ff
+            SFR_density = self.epsilon_SF * self.density / t_ff 
         else:
-            SFR_density = self.epsilon_SF * self.density / self.t_ff
+            SFR_density = self.epsilon_SF * self.density / t_ff
             SFR_density[self.alpha_vir < self.alpha_vir_crit] = 0.
         return SFR_density
+    
+    @property
+    def summary_stats(self):
+        ''' Calculate summary statistics in the regions defined by cond_hydro, cond_star, and cond_dm. '''
+        stats = [
+            Stat(sim.density, "density", 1., "g/cm^3", None, self.cond_hydro),
+            Stat(sim.temp, "temperature", 1., "K", sim.density, self.cond_hydro),
+            Stat(sim.ion_frac, "ionization frac", 1., "", sim.density, self.cond_hydro),
+            Stat(sim.metallicity, "metallicity", const.Z_sol, "Z_sol", sim.density, self.cond_hydro),
+            Stat(sim.mach, "mach number", 1., "", sim.density, self.cond_hydro),
+            Stat(sim.mach_turb, "turbulent mach number", 1., "", sim.density, self.cond_hydro),
+            Stat(sim.age_star, "star age", const.Myr, "Myr", sim.mass_star, self.cond_star),
+            Stat(len(self.mass_star[self.cond_star]), "star part number", 1., "", None, self.cond_star, is_array=False),
+            Stat(len(self.mass_dm[self.cond_dm]), "DM part number", 1., "", None, self.cond_dm, is_array=False),
+            Stat(len(self.contamination_frac, "contamination fraction", 1., "", None, self.cond_dm, is_array=False)
+        ]
+        
+        stat_field = [sim.density, sim.temp, sim.metallicity / const.Z_sol, sim.vel_turb / const.km, sim.mach, sim.age_star / const.Myr]
+        stat_name = ["density", "temperature", "metallicity", "turbulent velocity", "mach number", "star age"]
+        stat_unit = ["g/cm^3", "K", "Z_sol", "km/s", "", "Myr"]
+        stat_weight = [None, sim.density, sim.density, sim.density, sim.density, sim.mass_star]
+        stat_type = [HYDRO, HYDRO, HYDRO, HYDRO, HYDRO, STAR]
+        
+        for i, field in enumerate(fields):
+
+            cond = [cond_hydro, cond_dm, cond_star][types[i]]
+            if units[i] == None: units[i] = ""
+
+            min_field = np.min(field[cond])
+            max_field = np.max(field[cond])
+            mean_field = self.calc_mean(field, weight=weights[i], cond=cond)
+
+            self.summary_stats[names[i]] = dict(min=min_field, max=max_field, mean=mean_field, unit=units[i])
+
+        self.summary_stats["star part number"] = dict(min=0, max=0, mean=len(self.mass_star[cond_star]), unit="")
+        self.summary_stats["dark matter part number"] = dict(min=0, max=0, mean=len(self.mass_dm[cond_dm]), unit="")
+        self.summary_stats["contamination frac"] = dict(min=0, max=0, mean=self.calc_contamination_frac(cond=cond_dm), unit="")
+   
+    def print_stats(self):             
+                 
+        table = []
+        for field, stats in self.summary_stats.items():
+            table.append([field, "%.3g" % stats['max'], "%.3g" % stats['min'], "%.3g" % stats['mean'], stats['unit']])
+        print(tabulate(table, headers=['Field', 'Max', 'Min', 'Mean', 'Unit']))
+    
+    @property
+    def contamination_frac(self):
+        ''' Calculate the contamination fraction i.e. the mass fraction of dark matter particles above the minimum dark particle mass. '''
+        min_dm_mass = np.min(self.dm_mass)
+        cond_not_min_dm_mass = self.dm_mass > min_dm_mass
+        contamination_frac = np.sum(self.dm_mass * cond_not_min_dm_mass * self.cond_dm) / np.sum(self.dm_mass * self.cond_dm)
+        return contamination_frac
+    
+    
+class Stat(object):
+    
+    def __init__(self, field, name, unit, unit_name, weight, cond, is_array=True):
+        
+        self.field = field
+        self.name = name
+        self.unit = unit
+        self.unit_name = unit_name
+        self.weight = weight
+        self.cond = cond
+        self.is_array = is_array
+        
+    @property
+    def summary(self, cond):
+        
+        if self.is_array:
+            
+            mean =      
+            return dict(min=np.min(self.field[cond]), max=np.max(self.field[cond]), mean=np.mean(self.field))
+        else:
+            return dict(min=0., max=0., mean=self.field)
+        
+    
