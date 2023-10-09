@@ -257,6 +257,8 @@ class Sim(object):
     npz_file (str): filename of the npz file with the simulation data
     
     Attrs
+    sim_idx (int): index of the simulation (ALPHA_EPS0P01, ALPHA_EPS0P1, ALPHA_EPS1P0, DMO, GAS)
+    npz_file (str): filename of the npz file with the simulation data
     
     cond_hydro: conditional array to select a specific region for hydro fields
     cond_dm: conditional array to select a specific region for dark matter fields
@@ -337,12 +339,10 @@ class Sim(object):
     vel: magnitude of the velocity (cached property)
     vel_turb: turbulent velocity (cached property)
     
-    sim_idx (int): index of the simulation
     sim_name (str): name of the simulation
     sim_latex (str): latex string of the simulation, for plotting
     sim_dir (str): path to the simulation data
     save_dir (str): path of the directory to save figures
-    npz_file (str): name of the npz file
     
     n_H: array of hydrogen number densities
     vel_turb: array of turbulent velocities
@@ -398,9 +398,9 @@ class Sim(object):
         self.time_starbirth = (self.tau_starbirth / self.H0 + self.universe_age)
         self.age_star = self.time_now - self.time_starbirth
         
-        self.cond_hydro = (self.density >= 0)
-        self.cond_dm = (self.mass_dm >= 0)
-        self.cond_star = (self.mass_star >= 0)
+        self.cond_hydro = np.ones_like(self.density, dtype=bool)
+        self.cond_dm = np.ones_like(self.mass_dm, dtype=bool)
+        self.cond_star = np.ones_like(self.mass_star, dtype=bool)
 
         self.create_sph_grid()
     
@@ -801,76 +801,93 @@ class Sim(object):
     @property
     def summary_stats(self):
         ''' Calculate summary statistics in the regions defined by cond_hydro, cond_star, and cond_dm. '''
-        stats = [
-            Stat(sim.density, "density", 1., "g/cm^3", None, self.cond_hydro),
-            Stat(sim.temp, "temperature", 1., "K", sim.density, self.cond_hydro),
-            Stat(sim.ion_frac, "ionization frac", 1., "", sim.density, self.cond_hydro),
-            Stat(sim.metallicity, "metallicity", const.Z_sol, "Z_sol", sim.density, self.cond_hydro),
-            Stat(sim.mach, "mach number", 1., "", sim.density, self.cond_hydro),
-            Stat(sim.mach_turb, "turbulent mach number", 1., "", sim.density, self.cond_hydro),
-            Stat(sim.age_star, "star age", const.Myr, "Myr", sim.mass_star, self.cond_star),
-            Stat(len(self.mass_star[self.cond_star]), "star part number", 1., "", None, self.cond_star, is_array=False),
-            Stat(len(self.mass_dm[self.cond_dm]), "DM part number", 1., "", None, self.cond_dm, is_array=False),
-            Stat(len(self.contamination_frac, "contamination fraction", 1., "", None, self.cond_dm, is_array=False)
+        summary_stats = [
+            Stat(self.density, "density", 1., "g/cm^3", None, self.cond_hydro),
+            Stat(self.temp, "temperature", 1., "K", self.density, self.cond_hydro),
+            Stat(self.ion_frac, "ionization frac", 1., "", self.density, self.cond_hydro),
+            Stat(self.metallicity, "metallicity", const.Z_sol, "Z_sol", self.density, self.cond_hydro),
+            Stat(self.mach, "mach number", 1., "", self.density, self.cond_hydro),
+            Stat(self.mach_turb, "turbulent mach number", 1., "", self.density, self.cond_hydro),
+            Stat(self.age_star, "star age", const.Myr, "Myr", self.mass_star, self.cond_star),
+            Stat(len(self.mass_star[self.cond_star])*1., "star part number", 1., "", None, self.cond_star, is_array=False),
+            Stat(len(self.mass_dm[self.cond_dm])*1., "DM part number", 1., "", None, self.cond_dm, is_array=False),
+            Stat(self.contamination_frac, "contamination fraction", 1., "", None, self.cond_dm, is_array=False)
         ]
-        
-        stat_field = [sim.density, sim.temp, sim.metallicity / const.Z_sol, sim.vel_turb / const.km, sim.mach, sim.age_star / const.Myr]
-        stat_name = ["density", "temperature", "metallicity", "turbulent velocity", "mach number", "star age"]
-        stat_unit = ["g/cm^3", "K", "Z_sol", "km/s", "", "Myr"]
-        stat_weight = [None, sim.density, sim.density, sim.density, sim.density, sim.mass_star]
-        stat_type = [HYDRO, HYDRO, HYDRO, HYDRO, HYDRO, STAR]
-        
-        for i, field in enumerate(fields):
+        return summary_stats
 
-            cond = [cond_hydro, cond_dm, cond_star][types[i]]
-            if units[i] == None: units[i] = ""
-
-            min_field = np.min(field[cond])
-            max_field = np.max(field[cond])
-            mean_field = self.calc_mean(field, weight=weights[i], cond=cond)
-
-            self.summary_stats[names[i]] = dict(min=min_field, max=max_field, mean=mean_field, unit=units[i])
-
-        self.summary_stats["star part number"] = dict(min=0, max=0, mean=len(self.mass_star[cond_star]), unit="")
-        self.summary_stats["dark matter part number"] = dict(min=0, max=0, mean=len(self.mass_dm[cond_dm]), unit="")
-        self.summary_stats["contamination frac"] = dict(min=0, max=0, mean=self.calc_contamination_frac(cond=cond_dm), unit="")
-   
     def print_stats(self):             
-                 
+        ''' Print summary statistics in a nice table. '''         
         table = []
-        for field, stats in self.summary_stats.items():
-            table.append([field, "%.3g" % stats['max'], "%.3g" % stats['min'], "%.3g" % stats['mean'], stats['unit']])
-        print(tabulate(table, headers=['Field', 'Max', 'Min', 'Mean', 'Unit']))
+        for stat in self.summary_stats:
+            if stat.is_array:
+                table.append([stat.name, "%.3g" % stat.max, "%.3g" % stat.min, "%.3g" % stat.mean, stat.unit])
+            else:
+                table.append([stat.name, "", "", "%.3g" % stat.field, stat.unit])
+        print(tabulate(table, headers=['Field', 'Max', 'Min', 'Mean/Value', 'Unit'], numalign="right"))
     
     @property
     def contamination_frac(self):
         ''' Calculate the contamination fraction i.e. the mass fraction of dark matter particles above the minimum dark particle mass. '''
-        min_dm_mass = np.min(self.dm_mass)
-        cond_not_min_dm_mass = self.dm_mass > min_dm_mass
-        contamination_frac = np.sum(self.dm_mass * cond_not_min_dm_mass * self.cond_dm) / np.sum(self.dm_mass * self.cond_dm)
+        min_mass_dm = np.min(self.mass_dm)
+        cond_not_min_mass_dm = self.mass_dm > min_mass_dm
+        contamination_frac = np.sum(self.mass_dm * cond_not_min_mass_dm * self.cond_dm) / np.sum(self.mass_dm * self.cond_dm)
         return contamination_frac
     
     
 class Stat(object):
+    ''' 
+    Statistic object. 
     
+    Args
+    field: field
+    name (str): name of the field
+    unit (float): unit of the field
+    unit_name (str): name of the unit of the field
+    weight: weight for the computation of the mean
+    cond: conditional array to select a specific region
+    is_array (bool): field is an array, rather than a single value
+    
+    Attrs
+    field: field
+    name (str): name of the field
+    unit (float): unit of the field
+    unit_name (str): name of the unit of the field
+    weight: weight for the computation of the mean
+    cond: conditional array to select a specific region
+    is_array (bool): field is an array, rather than a single value
+    
+    min (float): minimum value (property)
+    max (float): maximum value (property)
+    mean (float): mean value (property)
+    summary (dict): summary of statistic (property)
+    '''
     def __init__(self, field, name, unit, unit_name, weight, cond, is_array=True):
         
         self.field = field
         self.name = name
         self.unit = unit
         self.unit_name = unit_name
-        self.weight = weight
-        self.cond = cond
+        if np.all(weight) == None: 
+             self.weight = np.ones_like(self.field)
+        else:
+             self.weight = weight
+        if np.all(cond) == None: 
+            self.cond = np.ones_like(self.field, dtype=bool)
+        else:
+            self.cond = cond
         self.is_array = is_array
         
     @property
-    def summary(self, cond):
-        
-        if self.is_array:
-            
-            mean =      
-            return dict(min=np.min(self.field[cond]), max=np.max(self.field[cond]), mean=np.mean(self.field))
-        else:
-            return dict(min=0., max=0., mean=self.field)
-        
-    
+    def min(self):
+        ''' Minimum value. '''
+        return np.min(self.field[self.cond])
+                 
+    @property
+    def max(self):
+        ''' Maximum value. '''
+        return np.max(self.field[self.cond])
+                 
+    @property
+    def mean(self):
+        ''' Mean value. '''
+        return np.sum(self.field * self.weight * self.cond) / np.sum(self.weight * self.cond)
