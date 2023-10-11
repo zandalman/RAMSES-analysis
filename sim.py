@@ -38,7 +38,7 @@ def git_commit(git_message=None):
         
         os.chdir(analysis_dir)
         if git_message == None: git_message = "pushing updates to analysis code"
-        list_of_filename = ["analysis.ipynb", "yt_to_numpy.ipynb", "const.py", "sim.py"]
+        list_of_filename = ["analysis.ipynb", "yt_to_numpy.ipynb", "const.py", "sim.py", "modules.py", "read_ramses.py"]
         
         for filename in list_of_filename:
             os.system("git add %s" % filename)
@@ -95,9 +95,18 @@ def symlog(x, C=1):
 
 
 def solve_quadratic(A, B, C):
-    ''' Solve a quadratic equation '''
-    x1 = (-B + np.sqrt(B**2 - 4 * A * C)) / (2 * A)
-    x2 = (-B - np.sqrt(B**2 - 4 * A * C)) / (2 * A)
+    ''' 
+    Solve a quadratic equation. 
+    
+    Note that we choose between forms of the quadratic formula to maximize numerical stability.
+    See https://math.stackexchange.com/questions/866331/numerically-stable-algorithm-for-solving-the-quadratic-equation-when-a-is-very/2007723#2007723
+    '''
+    assert np.shape(A) == np.shape(B), "A and B must have the same shape."
+    assert np.shape(B) == np.shape(C), "B and C must have the same shape."
+    
+    x1, x2 = np.zeros_like(B), np.zeros_like(B)
+    x1[B != 0] = ((-B - np.sign(B) * np.sqrt(B**2 - 4 * A * C)) / (2 * A))[B != 0]
+    x2[B != 0] = C[B != 0] / (A[B != 0] * x1[B != 0])
     return x1, x2
 
 
@@ -322,7 +331,7 @@ class Sim(object):
     
     density: density
     n_H: Hydrogen number density (cached property)
-    n_dust: Dust number density (cached property)
+    density_dust: Dust density (cached property)
     metallicity: metallicity
     pressure: pressure
     energy_turb: turbulent energy
@@ -344,21 +353,9 @@ class Sim(object):
     sim_dir (str): path to the simulation data
     save_dir (str): path of the directory to save figures
     
-    n_H: array of hydrogen number densities
-    vel_turb: array of turbulent velocities
-    age_star: array of ages of star particles
     gamma (float): adiabatic index
-    c_s: array of sound speeds
-    mach: array of Mach numbers
-    vel_turb_1d: array of one-dimensional turbulent velocities
-    mach_turb: array of turbulent mach numbers
-    alpha_vir: array of virial parameters
-    t_ff: array of freefall times
-    n_dust: array of dust number densities
-    
     epsilon_SF: array of star formation efficiencies
-    SFR_density: array of star formation rate densities
-    summury_stats (dict): summary statistics
+    summury_stats: list of Stat objects
     '''
     def __init__(self, sim_idx, npz_file, epsilon_SF=None):
         
@@ -459,7 +456,7 @@ class Sim(object):
         field_sph = interpn(self.coord1d, field, np.moveaxis(self.coord_cart_at_sph, 0, -1))
         return field_sph
     
-    def plot_slice(self, field, extrema, slice=Z, project=False, weight=None, cond=None, avg=True, width=None, do_log=True, slice_coord=None, nlevels=200, cmap='jet', cbar_label='field', cbar_tick_increment=None, plot_star=False, plot_dm=False, isocontours=None):
+    def plot_slice(self, field, extrema, slice=Z, project=False, weight=None, cond=None, avg=True, width=None, do_log=True, slice_coord=None, nlevels=200, cmap='jet', cbar_label='field', cbar_tick_increment=None, plot_star=False, plot_dm=False, isocontours=None, isocontour_field=None, isocontour_color='black'):
         '''
         Plot the cross section of a field perpendicular to a coordinate axis.
 
@@ -481,10 +478,12 @@ class Sim(object):
         plot_star (bool): plot markers for star particles within one cell of the cross section
         plot_dm (bool): plot markers for dark matter particles within one cell of the cross section
         isocontours: list of field values to plot isocontours
+        isocontour_field: field to use for isocontours
+        isocontour_color: color of isocontours
         '''
         if np.all(weight) == None: weight = 1.
         if np.all(cond) == None: cond = 1.
-
+        
         if slice_coord == None:
             slice_coord = 0
             slice_coord_idx = self.N//2
@@ -494,10 +493,9 @@ class Sim(object):
         if cbar_tick_increment == None: cbar_tick_increment = (extrema[1] - extrema[0]) / 10
 
         coord1_idx, coord2_idx = np.sort([(slice + 1) % 3, (slice + 2) % 3])
-
         coord12d = self.coord[coord1_idx].take(indices=slice_coord_idx, axis=slice)
         coord22d = self.coord[coord2_idx].take(indices=slice_coord_idx, axis=slice)
-
+        
         if project:
             field2d = np.sum(field * weight * cond * self.dx, axis=slice)
             if avg: field2d /= np.sum(np.ones_like(field) * weight * cond * self.dx + epsilon, axis=slice)
@@ -507,8 +505,6 @@ class Sim(object):
         if do_log: 
             field2d = np.log10(field2d + epsilon)
             extrema = (np.log10(extrema[0]), np.log10(extrema[1]))
-            if isocontours != None:
-                isocontours = [np.log10(isocontour) for isocontour in isocontours]
 
         plt.contourf(coord12d / const.kpc, coord22d / const.kpc, field2d, extend='both', cmap=cmap, levels=np.linspace(extrema[0], extrema[1], nlevels))
         plt.gca().set_aspect(True)
@@ -523,7 +519,16 @@ class Sim(object):
             plt.ylim(-width / const.kpc, width / const.kpc)
 
         if isocontours != None:
-            plt.contour(coord12d / const.kpc, coord22d / const.kpc, field2d, levels=isocontours, colors='black', linewidths=2, linestyles='solid')
+            
+            if np.all(isocontour_field) == None: isocontour_field = field
+            
+            if project:
+                isocontour_field2d = np.sum(isocontour_field * weight * cond * self.dx, axis=slice)
+                if avg: isocontour_field2d /= np.sum(np.ones_like(isocontour_field) * weight * cond * self.dx + epsilon, axis=slice)
+            else:
+                isocontour_field2d = isocontour_field.take(indices=slice_coord_idx, axis=slice)
+            
+            plt.contour(coord12d / const.kpc, coord22d / const.kpc, isocontour_field2d, levels=isocontours, colors=isocontour_color, linewidths=2, linestyles='solid')
 
         if plot_star:
 
@@ -719,11 +724,10 @@ class Sim(object):
         return const.X_cosmo * self.density / const.m_H
     
     @cached_property
-    def n_dust(self):
-        ''' Dust number density '''
-        n_dust = self.metallicity * self.n_H * (1 - self.ion_frac)
-        n_dust[self.temp > const.temp_HII] = 0
-        return n_dust
+    def density_dust(self):
+        ''' Dust density '''
+        density_dust = self.metallicity * self.density * (1 - self.ion_frac)
+        return density_dust
     
     @cached_property
     def vel_turb(self):
@@ -769,10 +773,11 @@ class Sim(object):
         '''
         lamb_dB = np.sqrt(const.h**2 / (2 * np.pi * const.m_e * const.k_B * self.temp)) # thermal deBroglie wavelength
         g0, g1 = 2, 1 # statistical weights
-        A = 1
+        A = np.ones_like(self.temp)
         B = (2 / (self.n_H * lamb_dB**3)) * (g1 / g0) * np.exp(-const.energy_HII / (const.k_B * self.temp))
         C = -B
-        ion_frac = solve_quadratic(A, B, C)[0]
+        ion_frac = solve_quadratic(A, B, C)[1]
+        ion_frac[ion_frac > 1] = 1.
         ion_frac[ion_frac > 1] = 1.
         return ion_frac
     
@@ -820,9 +825,9 @@ class Sim(object):
         table = []
         for stat in self.summary_stats:
             if stat.is_array:
-                table.append([stat.name, "%.3g" % stat.max, "%.3g" % stat.min, "%.3g" % stat.mean, stat.unit])
+                table.append([stat.name, "%.3g" % stat.max, "%.3g" % stat.min, "%.3g" % stat.mean, stat.unit_name])
             else:
-                table.append([stat.name, "", "", "%.3g" % stat.field, stat.unit])
+                table.append([stat.name, "", "", "%.3g" % stat.field, stat.unit_name])
         print(tabulate(table, headers=['Field', 'Max', 'Min', 'Mean/Value', 'Unit'], numalign="right"))
     
     @property
