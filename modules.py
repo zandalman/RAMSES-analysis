@@ -9,12 +9,13 @@ from tabulate import tabulate
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 from scipy.integrate import quad, quad_vec, trapz, cumtrapz
 from scipy.optimize import fsolve
 from scipy.ndimage import gaussian_filter
 from scipy.special import erf
-from scipy.interpolate import griddata, interpn
+from scipy.interpolate import griddata, interpn, RegularGridInterpolator
 from scipy.signal import welch
 
 from functools import cached_property

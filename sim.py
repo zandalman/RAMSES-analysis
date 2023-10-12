@@ -16,15 +16,19 @@ list_of_sim_latex = [r"$\varepsilon_{\rm SF} = 0.01$", r"$\varepsilon_{\rm SF} =
 
 
 class Terminal:
-    '''
-    Context manager for running commands in the terminal from Python.
-    '''
+    ''' Context manager for running commands in the terminal from Python. '''
     def __enter__(self):
         self.cwd = os.getcwd()
         return None
     
     def __exit__(self, exc_type, exc_value, exc_tb):
         os.chdir(self.cwd)
+
+
+class Arglist(object):
+    ''' Class for lists of function arguments. '''
+    def __init__(self, args):
+        self.args = np.array(args)
         
         
 def git_commit(git_message=None):
@@ -331,7 +335,9 @@ class Sim(object):
     
     density: density
     n_H: Hydrogen number density (cached property)
-    density_dust: Dust density (cached property)
+    density_dust: dust density (cached property)
+    density_star: density of stellar matter (cached property)
+    density_dm: density of dark matter (cached property)
     metallicity: metallicity
     pressure: pressure
     energy_turb: turbulent energy
@@ -456,15 +462,83 @@ class Sim(object):
         field_sph = interpn(self.coord1d, field, np.moveaxis(self.coord_cart_at_sph, 0, -1))
         return field_sph
     
-    def plot_slice(self, field, extrema, slice=Z, project=False, weight=None, cond=None, avg=True, width=None, do_log=True, slice_coord=None, nlevels=200, cmap='jet', cbar_label='field', cbar_tick_increment=None, plot_star=False, plot_dm=False, isocontours=None, isocontour_field=None, isocontour_color='black'):
+    def plot_slice_grid(self, *args, figsize=None, nrows=1, ncols=1, sharex=False, sharey=False, hspace=None, wspace=None, share_cbar=False, **kwargs):
+        '''
+        Wrapper function for plot_slice_on_ax, for a single plot.
+
+        Args
+        *args: arguments to be passed to plot_slice_on_ax
+        **kwargs: keyword arguments to be passed to plot_slice_on_ax
+        figsize: figure size
+        sharex (bool): share x-axis
+        sharey (bool): share y-axis
+        hspace (float): height spacing between subplots
+        wspace (float): width spacing between subplots
+        '''
+        fig, axs = plt.subplots(figsize=figsize, nrows=nrows, ncols=ncols, sharex=sharex, sharey=sharey, squeeze=False)
+        
+        for arg in args:
+            if type(arg) == Arglist:
+                assert arg.args.shape[:2] == (nrows, ncols), "Arglist shape must match (nrows, ncols)"
+        
+        for kwarg_value in kwargs.values():
+            if type(kwarg_value) == Arglist:
+                assert kwarg_value.args.shape[:2] == (nrows, ncols), "Arglist shape must match (nrows, ncols)"
+        
+        for i, axs1d in enumerate(axs):
+            for j, ax in enumerate(axs1d):
+                
+                if sharex:
+                    do_xlabel = (i == len(axs1d)-1)
+                else:
+                    do_xlabel = True
+                
+                if sharey:
+                    do_ylabel = (j == 0)
+                else:
+                    do_ylabel = True
+
+                current_args = list(args).copy()
+                current_kwargs = kwargs.copy()
+                
+                for arg_idx, arg in enumerate(args):
+                    if type(arg).__name__ == 'Arglist':
+                        current_args[arg_idx] = arg.args[i, j]
+
+                for kwarg_name, kwarg_value in kwargs.items():
+                    if type(kwarg_value).__name__ == 'Arglist':
+                        current_kwargs[kwarg_name] = kwarg_value.args[i, j]
+                
+                im = self.plot_slice_on_ax(ax, *current_args, **current_kwargs, do_xlabel=do_xlabel, do_ylabel=do_ylabel, do_cbar=(not share_cbar))
+
+        plt.subplots_adjust(hspace=hspace, wspace=wspace)
+
+        if share_cbar: plt.colorbar(im, ax=axs, ticks=np.arange(kwargs["extrema"][0], kwargs["extrema"][1] + 0.5 * kwargs["cbar_tick_increment"], kwargs["cbar_tick_increment"]), label=kwargs["cbar_label"])
+    
+    def plot_slice(self, *args, figsize=None, **kwargs):
+        '''
+        Wrapper function for plot_slice_on_ax, for a single plot.
+
+        Args
+        *args: arguments to be passed to plot_slice_on_ax
+        **kwargs: keyword arguments to be passed to plot_slice_on_ax
+        figsize: figure size
+        '''
+        fig = plt.figure(figsize=figsize)
+        ax = plt.gca()
+        self.plot_slice_on_ax(ax, *args, **kwargs, do_xlabel=True, do_ylabel=True, do_cbar=True)
+    
+    def plot_slice_on_ax(self, ax, field, extrema, unit=1., slice=Z, project=False, do_integrate=True, weight=None, cond=None, avg=True, width=None, do_log=True, slice_coord=None, nlevels=200, cmap='jet', cbar_label='field', cbar_tick_increment=None, plot_star=False, plot_dm=False, isocontours=None, isocontour_field=None, color_isocontour='black', color_star='black', color_dm='black', do_xlabel=True, do_ylabel=True, do_cbar=True, max_pixels=None, cbar_orientation='vertical'):
         '''
         Plot the cross section of a field perpendicular to a coordinate axis.
 
         Args
         field: field
         extrema (tuple): tuple of min and max field value
+        unit (float): unit of the field
         slice (int): index of the coordinate direction perpendicular to the slice plane
         project (bool): project the field along the slice direction
+        do_integrate (bool): integrate the physical length of the projection
         weight: weight array to use for the project
         cond: conditional array to select a specific region for the projection
         avg (bool): take the average (rather than sum) in the projection
@@ -479,8 +553,24 @@ class Sim(object):
         plot_dm (bool): plot markers for dark matter particles within one cell of the cross section
         isocontours: list of field values to plot isocontours
         isocontour_field: field to use for isocontours
-        isocontour_color: color of isocontours
+        color_isocontour (str): color of isocontours
+        color_star (str): color of star particles, only used if plot_star == True
+        color_dm (str): color of dark matter particles, only used if plot_dm == True
+        do_xlabel (bool): label x-axis
+        do_ylabel (bool): label y-axis
+        do_cbar (bool): plot a colorbar
+        max_pixels (int): maximum number of pixels to plot in each dimension
+        cbar_orientation (str): orientation of the colorbar
+
+        Returns
+        im: QuadContourSet
         '''
+        if type(field) in [str, np.str_]:
+            assert hasattr(self, field), "Field must be an attribute of Sim object is passed as string."
+            field = getattr(self, field)
+        
+        field = field / unit
+        
         if np.all(weight) == None: weight = 1.
         if np.all(cond) == None: cond = 1.
         
@@ -497,8 +587,9 @@ class Sim(object):
         coord22d = self.coord[coord2_idx].take(indices=slice_coord_idx, axis=slice)
         
         if project:
-            field2d = np.sum(field * weight * cond * self.dx, axis=slice)
-            if avg: field2d /= np.sum(np.ones_like(field) * weight * cond * self.dx + epsilon, axis=slice)
+            if do_integrate: weight *= self.dx
+            field2d = np.sum(field * weight * cond, axis=slice)
+            if avg: field2d /= np.sum(np.ones_like(field) * weight * cond + epsilon, axis=slice)
         else:
             field2d = field.take(indices=slice_coord_idx, axis=slice)
 
@@ -506,13 +597,29 @@ class Sim(object):
             field2d = np.log10(field2d + epsilon)
             extrema = (np.log10(extrema[0]), np.log10(extrema[1]))
 
-        plt.contourf(coord12d / const.kpc, coord22d / const.kpc, field2d, extend='both', cmap=cmap, levels=np.linspace(extrema[0], extrema[1], nlevels))
-        plt.gca().set_aspect(True)
-        plt.colorbar(ticks=np.arange(extrema[0], extrema[1] + 0.5 * cbar_tick_increment, cbar_tick_increment), label=cbar_label)
+        if max_pixels is not None:
+            skip = np.max([1, self.N // max_pixels])
+            field2d = field2d[::skip, ::skip]
+            coord12d = coord12d[::skip, ::skip]
+            coord22d = coord22d[::skip, ::skip]
+        
+        im = ax.contourf(coord12d / const.kpc, coord22d / const.kpc, field2d, extend='both', cmap=cmap, levels=np.linspace(extrema[0], extrema[1], nlevels))
+        ax.set_aspect(True)
+        if do_cbar: 
+            divider = make_axes_locatable(ax)
+            if cbar_orientation == "horizontal":
+                cax = divider.append_axes("top", size="5%", pad=0.05)
+                plt.colorbar(im, ax=ax, cax=cax, ticks=np.arange(extrema[0], extrema[1] + 0.5 * cbar_tick_increment, cbar_tick_increment), label=cbar_label, orientation="horizontal")
+                cax.xaxis.set_ticks_position("top")
+                cax.xaxis.set_label_position("top")
+            elif cbar_orientation == "vertical":
+                cax = divider.append_axes("right", size="5%", pad=0.05)
+                plt.colorbar(im, ax=ax, cax=cax, ticks=np.arange(extrema[0], extrema[1] + 0.5 * cbar_tick_increment, cbar_tick_increment), label=cbar_label, orientation="vertical")
 
         coord_labels = [r"$x$ [kpc]", r"$y$ [kpc]", r"$z$ [kpc]"]
         coord1_label, coord2_label = coord_labels[coord1_idx], coord_labels[coord2_idx]
-        plt.xlabel(coord1_label); plt.ylabel(coord2_label)
+        if do_xlabel: ax.set_xlabel(coord1_label)
+        if do_ylabel: ax.set_ylabel(coord2_label)
 
         if width != None:
             plt.xlim(-width / const.kpc, width / const.kpc)
@@ -521,25 +628,28 @@ class Sim(object):
         if isocontours != None:
             
             if np.all(isocontour_field) == None: isocontour_field = field
-            
+
             if project:
                 isocontour_field2d = np.sum(isocontour_field * weight * cond * self.dx, axis=slice)
                 if avg: isocontour_field2d /= np.sum(np.ones_like(isocontour_field) * weight * cond * self.dx + epsilon, axis=slice)
             else:
                 isocontour_field2d = isocontour_field.take(indices=slice_coord_idx, axis=slice)
             
-            plt.contour(coord12d / const.kpc, coord22d / const.kpc, isocontour_field2d, levels=isocontours, colors=isocontour_color, linewidths=2, linestyles='solid')
+            if skip is not None: isocontour_field2d = isocontour_field2d[::skip, ::skip]
+            
+            ax.contour(coord12d / const.kpc, coord22d / const.kpc, isocontour_field2d, levels=isocontours, colors=color_isocontour, linewidths=2, linestyles='solid')
 
         if plot_star:
 
-            in_slice_star = np.abs(self.star_coord[slice] - slice_coord) < self.dx
-            plt.plot(self.star_coord[coord1_idx][in_slice_star] / const.kpc, self.star_coord[coord2_idx][in_slice_star] / const.kpc, marker='*', color='black', linestyle='')
+            in_slice_star = np.abs(self.coord_star[slice] - slice_coord) < self.dx
+            ax.plot(self.coord_star[coord1_idx][in_slice_star] / const.kpc, self.coord_star[coord2_idx][in_slice_star] / const.kpc, marker='*', color=color_star, linestyle='')
 
         if plot_dm:
 
-            in_slice_dm = np.abs(self.dm_coord[slice] - slice_coord) < self.dx
-            plt.plot(self.dm_coord[coord1_idx][in_slice_dm] / const.kpc, self.dm_coord[coord2_idx][in_slice_dm] / const.kpc, marker='.', color='black', linestyle='')
+            in_slice_dm = np.abs(self.coord_dm[slice] - slice_coord) < self.dx
+            ax.plot(self.coord_dm[coord1_idx][in_slice_dm] / const.kpc, self.coord_dm[coord2_idx][in_slice_dm] / const.kpc, marker='.', color=color_dm, linestyle='')
 
+        return im
 
     def plot_AH(self, field2d, extrema, do_log=True, nlevels=200, cmap='jet', cbar_label='field', cbar_tick_increment=None, num_axis_lines=12, axis_labels=True):
         '''
@@ -730,6 +840,26 @@ class Sim(object):
         return density_dust
     
     @cached_property
+    def density_star(self):
+        ''' Density of stellar mass '''
+        edges1d = np.zeros((3, self.N+1))
+        edges1d[:, :-1] = self.coord1d - self.dx/2
+        edges1d[:, -1] = self.coord1d[:, -1] + self.dx/2
+        mass_star_grid, _ = np.histogramdd(self.coord_star.T, bins=edges1d, weights=self.mass_star)
+        density_star = mass_star_grid / self.dV
+        return density_star
+    
+    @cached_property
+    def density_dm(self):
+        ''' Density of dark matter '''
+        edges1d = np.zeros((3, self.N+1))
+        edges1d[:, :-1] = self.coord1d - self.dx/2
+        edges1d[:, -1] = self.coord1d[:, -1] + self.dx/2
+        mass_dm_grid, _ = np.histogramdd(self.coord_dm.T, bins=edges1d, weights=self.mass_dm)
+        density_dm = mass_dm_grid / self.dV
+        return density_dm
+    
+    @cached_property
     def vel_turb(self):
         ''' Turbulent velocity '''
         return np.sqrt(2 * self.energy_turb)
@@ -868,7 +998,7 @@ class Stat(object):
     '''
     def __init__(self, field, name, unit, unit_name, weight, cond, is_array=True):
         
-        self.field = field
+        self.field = field / unit
         self.name = name
         self.unit = unit
         self.unit_name = unit_name
