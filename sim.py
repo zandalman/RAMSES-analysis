@@ -42,7 +42,7 @@ def git_commit(git_message=None):
         
         os.chdir(analysis_dir)
         if git_message == None: git_message = "pushing updates to analysis code"
-        list_of_filename = ["analysis.ipynb", "yt_to_numpy.ipynb", "const.py", "sim.py", "modules.py", "read_ramses.py"]
+        list_of_filename = ["analysis.ipynb", "yt_to_numpy.ipynb", "analytic.ipynb", "const.py", "sim.py", "modules.py", "read_ramses.py"]
         
         for filename in list_of_filename:
             os.system("git add %s" % filename)
@@ -303,6 +303,7 @@ class Sim(object):
     ref_crit: refinement criterion
     contamination_frac: contamination fraction of high mass dark matter particles (cached property)
     max_amr_level (int): max AMR level of data read from yt
+    lowres (int): factor by which grid resolution is lower than resolution of max AMR level
     box_size (float): simulation box size
     left_edge: array of coordinate of the left corner of the simulation box
     N (int): array size
@@ -353,6 +354,7 @@ class Sim(object):
     vel_vec_sph_at_cart: velocity vector in spherical coordinates on the Cartesian grid (cached property)
     vel: magnitude of the velocity (cached property)
     vel_turb: turbulent velocity (cached property)
+    ang_mom: angular momentum (cached property)
     
     sim_name (str): name of the simulation
     sim_latex (str): latex string of the simulation, for plotting
@@ -426,7 +428,7 @@ class Sim(object):
         Create a grid in spherical coordinates.
         '''
         self.coord1d_sph = np.array([
-            np.linspace(0, np.max(self.coord1d), self.N),
+            np.linspace(0, self.box_size / 2, self.N),
             np.linspace(0, np.pi, self.N),
             np.linspace(0, 2 * np.pi, self.N)
         ])
@@ -459,10 +461,26 @@ class Sim(object):
 
     def interp_to_sph(self, field):
         ''' Interpolate a field to a spherical grid '''
-        field_sph = interpn(self.coord1d, field, np.moveaxis(self.coord_cart_at_sph, 0, -1))
+        field_sph = interpn(self.coord1d, field, np.moveaxis(self.coord_cart_at_sph, 0, -1), bounds_error=False, fill_value=None)
         return field_sph
     
-    def plot_slice_grid(self, *args, figsize=None, nrows=1, ncols=1, sharex=False, sharey=False, hspace=None, wspace=None, share_cbar=False, **kwargs):
+    @staticmethod
+    def get_current_args(args, kwargs, i, j):
+
+        current_args = list(args).copy()
+        current_kwargs = kwargs.copy()
+        
+        for arg_idx, arg in enumerate(args):
+            if type(arg).__name__ == 'Arglist':
+                current_args[arg_idx] = arg.args[i, j]
+
+        for kwarg_name, kwarg_value in kwargs.items():
+            if type(kwarg_value).__name__ == 'Arglist':
+                current_kwargs[kwarg_name] = kwarg_value.args[i, j]
+
+        return current_args, current_kwargs
+    
+    def plot_grid(self, *args, figsize=None, nrows=1, ncols=1, sharex=False, sharey=False, hspace=None, wspace=None, share_cbar=False, ptype="slice", **kwargs):
         '''
         Wrapper function for plot_slice_on_ax, for a single plot.
 
@@ -474,6 +492,7 @@ class Sim(object):
         sharey (bool): share y-axis
         hspace (float): height spacing between subplots
         wspace (float): width spacing between subplots
+        ptype (str): plot type
         '''
         fig, axs = plt.subplots(figsize=figsize, nrows=nrows, ncols=ncols, sharex=sharex, sharey=sharey, squeeze=False)
         
@@ -498,24 +517,17 @@ class Sim(object):
                 else:
                     do_ylabel = True
 
-                current_args = list(args).copy()
-                current_kwargs = kwargs.copy()
-                
-                for arg_idx, arg in enumerate(args):
-                    if type(arg).__name__ == 'Arglist':
-                        current_args[arg_idx] = arg.args[i, j]
-
-                for kwarg_name, kwarg_value in kwargs.items():
-                    if type(kwarg_value).__name__ == 'Arglist':
-                        current_kwargs[kwarg_name] = kwarg_value.args[i, j]
-                
-                im = self.plot_slice_on_ax(ax, *current_args, **current_kwargs, do_xlabel=do_xlabel, do_ylabel=do_ylabel, do_cbar=(not share_cbar))
+                current_args, current_kwargs = self.get_current_args(args, kwargs, i, j)
+                if ptype == "slice":
+                    im = self.plot_slice_on_ax(ax, *current_args, **current_kwargs, do_xlabel=do_xlabel, do_ylabel=do_ylabel, do_cbar=(not share_cbar))
+                elif ptype == "AH":
+                    im = self.plot_AH_on_ax(ax, *current_args, **current_kwargs, do_xlabel=do_xlabel, do_ylabel=do_ylabel, do_cbar=(not share_cbar))
 
         plt.subplots_adjust(hspace=hspace, wspace=wspace)
 
         if share_cbar: plt.colorbar(im, ax=axs, ticks=np.arange(kwargs["extrema"][0], kwargs["extrema"][1] + 0.5 * kwargs["cbar_tick_increment"], kwargs["cbar_tick_increment"]), label=kwargs["cbar_label"])
     
-    def plot_slice(self, *args, figsize=None, **kwargs):
+    def plot(self, *args, figsize=None, ptype="slice", **kwargs):
         '''
         Wrapper function for plot_slice_on_ax, for a single plot.
 
@@ -523,16 +535,21 @@ class Sim(object):
         *args: arguments to be passed to plot_slice_on_ax
         **kwargs: keyword arguments to be passed to plot_slice_on_ax
         figsize: figure size
+        ptype (str): plot type
         '''
         fig = plt.figure(figsize=figsize)
         ax = plt.gca()
-        self.plot_slice_on_ax(ax, *args, **kwargs, do_xlabel=True, do_ylabel=True, do_cbar=True)
+        if ptype == "slice":
+            self.plot_slice_on_ax(ax, *args, **kwargs, do_xlabel=True, do_ylabel=True, do_cbar=True)
+        elif ptype == "AH":
+            self.plot_AH_on_ax(ax, *args, **kwargs, do_xlabel=True, do_ylabel=True, do_cbar=True)
     
-    def plot_slice_on_ax(self, ax, field, extrema, unit=1., slice=Z, project=False, do_integrate=True, weight=None, cond=None, avg=True, width=None, do_log=True, slice_coord=None, nlevels=200, cmap='jet', cbar_label='field', cbar_tick_increment=None, plot_star=False, plot_dm=False, isocontours=None, isocontour_field=None, color_isocontour='black', color_star='black', color_dm='black', do_xlabel=True, do_ylabel=True, do_cbar=True, max_pixels=None, cbar_orientation='vertical'):
+    def plot_slice_on_ax(self, ax, field, extrema, unit=1., slice=Z, project=False, do_integrate=True, weight=None, cond=None, avg=True, width=None, do_log=True, slice_coord=None, nlevels=200, cmap='jet', cbar_label='field', cbar_tick_increment=None, plot_star=False, plot_dm=False, isocontours=None, isocontour_field=None, color_isocontour='black', color_star='black', color_dm='black', do_xlabel=True, do_ylabel=True, do_cbar=True, max_pixels=None, cbar_orientation='vertical', title=None):
         '''
         Plot the cross section of a field perpendicular to a coordinate axis.
 
         Args
+        ax: axis object
         field: field
         extrema (tuple): tuple of min and max field value
         unit (float): unit of the field
@@ -561,17 +578,23 @@ class Sim(object):
         do_cbar (bool): plot a colorbar
         max_pixels (int): maximum number of pixels to plot in each dimension
         cbar_orientation (str): orientation of the colorbar
+        title (str): title of the plot
 
         Returns
-        im: QuadContourSet
+        im: QuadContourSet object
         '''
         if type(field) in [str, np.str_]:
             assert hasattr(self, field), "Field must be an attribute of Sim object is passed as string."
             field = getattr(self, field)
+        field = np.copy(field / unit)
+
+        if type(weight) in [str, np.str_]:
+            assert hasattr(self, weight), "Weight must be an attribute of Sim object is passed as string."
+            weight = getattr(self, weight)
+        weight = np.copy(weight)
         
-        field = field / unit
-        
-        if np.all(weight) == None: weight = 1.
+        if np.all(weight) == None: 
+            weight = 1.
         if np.all(cond) == None: cond = 1.
         
         if slice_coord == None:
@@ -605,16 +628,7 @@ class Sim(object):
         
         im = ax.contourf(coord12d / const.kpc, coord22d / const.kpc, field2d, extend='both', cmap=cmap, levels=np.linspace(extrema[0], extrema[1], nlevels))
         ax.set_aspect(True)
-        if do_cbar: 
-            divider = make_axes_locatable(ax)
-            if cbar_orientation == "horizontal":
-                cax = divider.append_axes("top", size="5%", pad=0.05)
-                plt.colorbar(im, ax=ax, cax=cax, ticks=np.arange(extrema[0], extrema[1] + 0.5 * cbar_tick_increment, cbar_tick_increment), label=cbar_label, orientation="horizontal")
-                cax.xaxis.set_ticks_position("top")
-                cax.xaxis.set_label_position("top")
-            elif cbar_orientation == "vertical":
-                cax = divider.append_axes("right", size="5%", pad=0.05)
-                plt.colorbar(im, ax=ax, cax=cax, ticks=np.arange(extrema[0], extrema[1] + 0.5 * cbar_tick_increment, cbar_tick_increment), label=cbar_label, orientation="vertical")
+        if do_cbar: self.plot_cbar(ax, im, extrema, cbar_tick_increment, cbar_label, cbar_orientation)
 
         coord_labels = [r"$x$ [kpc]", r"$y$ [kpc]", r"$z$ [kpc]"]
         coord1_label, coord2_label = coord_labels[coord1_idx], coord_labels[coord2_idx]
@@ -624,6 +638,8 @@ class Sim(object):
         if width != None:
             plt.xlim(-width / const.kpc, width / const.kpc)
             plt.ylim(-width / const.kpc, width / const.kpc)
+
+        if title != None: ax.set_title(title)
 
         if isocontours != None:
             
@@ -650,14 +666,16 @@ class Sim(object):
             ax.plot(self.coord_dm[coord1_idx][in_slice_dm] / const.kpc, self.coord_dm[coord2_idx][in_slice_dm] / const.kpc, marker='.', color=color_dm, linestyle='')
 
         return im
-
-    def plot_AH(self, field2d, extrema, do_log=True, nlevels=200, cmap='jet', cbar_label='field', cbar_tick_increment=None, num_axis_lines=12, axis_labels=True):
+    
+    def plot_AH_on_ax(self, ax, field2d, extrema, unit=1., do_log=True, nlevels=200, cmap='jet', cbar_label='field', cbar_tick_increment=None, num_axis_lines=12, axis_labels=True, do_xlabel=True, do_ylabel=True, do_cbar=True, cbar_orientation='vertical', title=None):
         '''
         Plot a spherical slice of a field using the Aitoff-Hammer projection.
 
         Args
+        ax: axis object
         field2d: two-dimensional field, with theta on the first axis and phi on the second
         extrema (tuple): tuple of min and max field value
+        unit (float): unit of the field
         do_log (bool): plot the log of the field
         nlevels (int): number of levels in the contour plot
         cmap (str): colormap for the plot
@@ -665,9 +683,19 @@ class Sim(object):
         cbar_tick_increment (float): increment of the colorbar ticks
         num_axis_lines (int): number of lines of constant theta and phi to mark on plot
         axis_labels (bool): label lines of constant theta and phi
+        do_xlabel (bool): label x-axis
+        do_ylabel (bool): label y-axis
+        do_cbar (bool): plot a colorbar
+        cbar_orientation (str): orientation of the colorbar
+        title (str): title of the plot
+
+        Returns
+        im: QuadContourSet object
         '''
-        plt.gca().set_aspect(3/2)
-        plt.axis("off")
+        field2d = np.copy(field2d / unit)
+        
+        ax.set_aspect(3/2)
+        ax.axis("off")
 
         if cbar_tick_increment == None: cbar_tick_increment = (extrema[1] - extrema[0]) / 10
 
@@ -678,23 +706,55 @@ class Sim(object):
         for i, axis_line_value in enumerate(np.arange(0, (num_axis_lines + 0.5) * np.pi / num_axis_lines, np.pi / num_axis_lines)):
 
             AH1_h_axis_line, AH2_h_axis_line = calc_AH_coords(axis_line_value * np.ones_like(self.coord1d_sph[PH]), self.coord1d_sph[PH])
-            plt.plot(AH1_h_axis_line, AH2_h_axis_line, color='black', lw=0.75)
+            ax.plot(AH1_h_axis_line, AH2_h_axis_line, color='black', lw=0.75)
             AH1_ph_axis_line, AH2_ph_axis_line = calc_AH_coords(self.coord1d_sph[H], 2 * axis_line_value * np.ones_like(self.coord1d_sph[H]))
-            plt.plot(AH1_ph_axis_line, AH2_ph_axis_line, color='black', lw=0.75)
+            ax.plot(AH1_ph_axis_line, AH2_ph_axis_line, color='black', lw=0.75)
 
             if axis_labels and i not in [0, num_axis_lines]:
 
                 h_label = r'$%d^\circ$' % int(np.round(axis_line_value * 180 / np.pi))
-                plt.annotate(h_label, (AH1_h_axis_line[0], AH2_h_axis_line[0]), xytext=(-3., 0), xycoords='data', textcoords='offset fontsize', rotation=0)
+                ax.annotate(h_label, (AH1_h_axis_line[0], AH2_h_axis_line[0]), xytext=(-3., 0), xycoords='data', textcoords='offset fontsize', rotation=0)
                 ph_label = r'$%d^\circ$' % int(np.round(axis_line_value * 360 / (np.pi)))
-                plt.annotate(ph_label, (AH1_ph_axis_line[self.N//2], AH2_ph_axis_line[self.N//2]), xytext=(0.3, -0.5), xycoords='data', textcoords='offset fontsize', rotation=90)
+                ax.annotate(ph_label, (AH1_ph_axis_line[self.N//2], AH2_ph_axis_line[self.N//2]), xytext=(0.3, -0.5), xycoords='data', textcoords='offset fontsize', rotation=90)
 
-        plt.annotate(r'$\theta$', (0., 0.5), xytext=(-2.5, -0.25), xycoords='axes fraction', fontsize=20, textcoords='offset fontsize')
-        plt.annotate(r'$\varphi$', (0.5, 0.), xytext=(-0.5, -1), xycoords='axes fraction', fontsize=20, textcoords='offset fontsize')
+        if do_xlabel: ax.annotate(r'$\theta$', (0., 0.5), xytext=(-2.5, -0.25), xycoords='axes fraction', fontsize=20, textcoords='offset fontsize')
+        if do_ylabel: ax.annotate(r'$\varphi$', (0.5, 0.), xytext=(-0.5, -1), xycoords='axes fraction', fontsize=20, textcoords='offset fontsize')
 
-        plt.contourf(self.coord_AH_at_sph[0], self.coord_AH_at_sph[1], field2d, levels=np.linspace(extrema[0], extrema[1], nlevels), cmap=cmap, extend='both')
-        plt.colorbar(ticks=np.arange(extrema[0], extrema[1] + 0.5 * cbar_tick_increment, cbar_tick_increment), label=cbar_label) 
+        im = ax.contourf(self.coord_AH_at_sph[0], self.coord_AH_at_sph[1], field2d, levels=np.linspace(extrema[0], extrema[1], nlevels), cmap=cmap, extend='both')
+        if do_cbar: 
+            if cbar_orientation == "vertical":
+                cbar_size, cbar_pad = "3%", -0.8
+            elif cbar_orientation == "horizontal":
+                cbar_size, cbar_pad = "5%", 0.1
+            self.plot_cbar(ax, im, extrema, cbar_tick_increment, cbar_label, cbar_orientation, size=cbar_size, pad=cbar_pad)
+
+        if title != None: ax.set_title(title)
+
+        return im
     
+    def plot_cbar(self, ax, im, extrema, tick_increment, label, orientation, size="5%", pad=0.05):
+        '''
+        Plot a colorbar.
+
+        Args
+        ax: axis object
+        im: QuadContourSet object
+        extrema (tuple): tuple of min and max field value
+        tick_increment (float): increment of the colorbar ticks
+        label (string): colorbar label
+        orientation (str): orientation of the colorbar
+        size (str): size of the colorbar
+        pad (float): padding of the colorbar
+        '''
+        divider = make_axes_locatable(ax)
+        if orientation == "horizontal":
+            cax = divider.append_axes("top", size=size, pad=pad)
+            plt.colorbar(im, ax=ax, cax=cax, ticks=np.arange(extrema[0], extrema[1] + 0.5 * tick_increment, tick_increment), label=label, orientation="horizontal")
+            cax.xaxis.set_ticks_position("top")
+            cax.xaxis.set_label_position("top")
+        elif orientation == "vertical":
+            cax = divider.append_axes("right", size=size, pad=pad)
+            plt.colorbar(im, ax=ax, cax=cax, ticks=np.arange(extrema[0], extrema[1] + 0.5 * tick_increment, tick_increment), label=label, orientation="vertical")
     
     def calc_radial_profile(self, field, r_lim=None, nbins=100, weight=None, cond=None):
         '''
@@ -873,6 +933,11 @@ class Sim(object):
     def vel(self):
         ''' Magnitude of the velocity '''
         return calc_norm(self.vel_vec)
+    
+    @cached_property
+    def ang_mom(self):
+        ''' Angular momentum '''
+        return np.cross(self.coord, self.vel_vec, axis=0)
     
     @cached_property
     def c_s(self):

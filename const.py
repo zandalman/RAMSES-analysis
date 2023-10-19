@@ -1,6 +1,7 @@
 '''
 Units and physical constants.
 '''
+import numpy as np
 
 # units
 m = 100 # meter [cm]
@@ -17,8 +18,8 @@ ly = 9.463e17 # lightyear [cm]
 
 # physical constants
 c = 2.99792458e10 # speed of light [cm/s]
-h = 6.6260755e-27 # plank constant [erg/s]
-hbar = 1.05457266e-27 # reduced plank constant [erg/s]
+h = 6.6260755e-27 # plank constant [erg s]
+hbar = 1.05457266e-27 # reduced plank constant [erg s]
 G = 6.67259e-8 # gravitational constant [cm^3/g/s^2]
 e = 4.8032068e-10 # electron charge [esu]
 m_e = 9.1093897e-28 # electron mass [g]
@@ -43,3 +44,14 @@ X_sol, Y_sol, Z_sol = 0.7381, 0.2485, 0.0134 # solar abundances
 X_cosmo, Y_cosmo, Z_cosmo = 0.7515, 0.2485, 0. # cosmological abundances
 temp_HII = 1e4 # hydrogen ionization temperature [Kelvin]
 energy_HII = 13.59844 * eV # hydrogen ionization energy [erg]
+
+# cosmology (from Plank https://arxiv.org/abs/1502.01589)
+h0 = 0.6774 # normalized Hubble constant
+H0 = h0 * 100 * km / Mpc # Hubble constant [1/s]
+Omega_m0 = 0.3089 # Matter density parameter
+Omega_b0 = 0.0486 # Baryon density parameter
+Omega_L0 = 0.6911 # Dark energy density parameter
+Omega_k0 = 0. # Curvature density parameter
+rho_crit_0 = 3 * H0**2 / (8 * np.pi * G) # critical density [g/cm^3]
+sigma8 = 0.811 # RMS matter fluctuations averaged over an R = 8h^(-1) sphere
+n_PS = 0.9667 # power law of the initial power spectru,
