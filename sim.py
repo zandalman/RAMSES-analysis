@@ -74,23 +74,23 @@ def save_fig(fig_name, filetype="png", dpi=300):
     plt.savefig(os.path.join(save_dir, "all", filename), bbox_inches="tight", dpi=dpi)
     print("Saved figure as '%s'" % filename)
         
-        
-def calc_norm(a):
-    ''' Compute the norm of a vector. '''
-    return np.sqrt(np.sum(a**2, axis=0))
+
+def norm(A):
+    ''' Compute the norm of a vector field. '''
+    return np.sqrt(np.sum(A**2, axis=0))
 
 
-def calc_dot(a, b):
-    ''' Compute the dot product of two vectors '''
-    return np.sum(a * b, axis=0)
+def dot(A, B):
+    ''' Compute the dot product of two vector fields. '''
+    return np.sum(A * B, axis=0)
 
 
-def calc_proj(a, b, do_norm=True):
-    ''' Compute the projection of one vector onto another '''
+def proj(A, B, do_norm=True):
+    ''' Compute the projection of one vector field onto another. '''
     if do_norm:
-        return calc_dot(a, b) / calc_norm(b)
+        return dot(A, B) / norm(B)
     else:
-        return (calc_dot(a, b) / calc_norm(b)**2)[None, :, :, :] * b
+        return (dot(A, B) / norm(B)**2)[None, :, :, :] * B
     
 
 def symlog(x, C=1):
@@ -651,7 +651,7 @@ class Sim(object):
             else:
                 isocontour_field2d = isocontour_field.take(indices=slice_coord_idx, axis=slice)
             
-            if skip is not None: isocontour_field2d = isocontour_field2d[::skip, ::skip]
+            if max_pixels is not None: isocontour_field2d = isocontour_field2d[::skip, ::skip]
             
             ax.contour(coord12d / const.kpc, coord22d / const.kpc, isocontour_field2d, levels=isocontours, colors=color_isocontour, linewidths=2, linestyles='solid')
 
@@ -853,6 +853,27 @@ class Sim(object):
 
         return mean
     
+    def grad(self, field):
+        ''' Compute the gradient of a scalar field. '''
+        grad_Phi = np.zeros((3,) + field.shape)
+        grad_Phi[X] = np.gradient(field, self.dx, axis=X)
+        grad_Phi[Y] = np.gradient(field, self.dx, axis=Y)
+        grad_Phi[Z] = np.gradient(field, self.dx, axis=Z)
+        return grad_Phi
+
+    def div(self, field):
+        ''' Compute the divergence of a vector field. '''
+        div_field = np.gradient(field[X], self.dx, axis=X) + np.gradient(field[Y], self.dx, axis=Y) + np.gradient(field[Z], self.dx, axis=Z)
+        return div_field
+
+    def curl(self, field):
+        ''' Compute the curl of a vector field. '''
+        curl_field = np.zeros_like(field)
+        curl_field[X] = np.gradient(field[Z], self.dx, axis=Y) - np.gradient(field[Y], self.dx, axis=Z)
+        curl_field[Y] = np.gradient(field[X], self.dx, axis=Z) - np.gradient(field[Z], self.dx, axis=X)
+        curl_field[Z] = np.gradient(field[Y], self.dx, axis=X) - np.gradient(field[X], self.dx, axis=Y)
+        return curl_field
+    
     @cached_property
     def coord_cyl_at_cart(self):
         ''' Cylindrical coordinates on the Cartesian grid.'''
@@ -932,7 +953,7 @@ class Sim(object):
     @cached_property
     def vel(self):
         ''' Magnitude of the velocity '''
-        return calc_norm(self.vel_vec)
+        return norm(self.vel_vec)
     
     @cached_property
     def ang_mom(self):
