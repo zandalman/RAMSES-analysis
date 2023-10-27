@@ -4,28 +4,23 @@ X, Y, Z = 0, 1, 2 # cartesian coordinate indices
 S, PH2, Z = 0, 1, 2 # cylindrical coordinate indices
 R, H, PH = 0, 1, 2 # spherical coordinate indices
 CART, CYL, SPH = 0, 1, 2 # coordinate systems
-ALPHA_EPS0P01, ALPHA_EPS0P1, ALPHA_EPS1P0, DMO, GAS = 0, 1, 2, 3, 4
 HYDRO, DM, STAR = 0, 1, 2
 epsilon = 1e-30 # small number
 
 analysis_dir = "/home/za9132/analysis"
-save_dir = os.path.join(analysis_dir, "figures")
+save_dir = os.path.join(analysis_dir, "figures", "current")
 sim_base_dir = "/home/za9132/scratch/romain"
-list_of_sim_name = [
-    "old_sims/alpha_eps0p01", 
-    "old_sims/alpha_eps0p1", 
-    "old_sims/alpha_eps1p0", 
-    "old_sims/dmo", 
-    "old_sims/gas"
-]
-list_of_sim_latex = [
-    r"$\varepsilon_{\rm SF} = 0.01$", 
-    r"$\varepsilon_{\rm SF} = 0.1$", 
-    r"$\varepsilon_{\rm SF} = 1.0$", 
-    "Dark Matter Only", 
-    "Multi-Freefall Model"
-]
 
+sim_name_to_latex = {
+    "alpha_eps0p01": r"$\varepsilon_{\rm SF} = 0.01$", 
+    "alpha_eps0p1": r"$\varepsilon_{\rm SF} = 0.1$", 
+    "alpha_eps1p0": r"$\varepsilon_{\rm SF} = 1.0$", 
+    "alpha_eps0p01_highres": r"$\varepsilon_{\rm SF} = 0.01$ (highres)", 
+    "alpha_eps0p1_highres": r"$\varepsilon_{\rm SF} = 0.1$ (highres)", 
+    "alpha_eps1p0_highres": r"$\varepsilon_{\rm SF} = 1.0$ (highres)",
+    "dmo": "Dark Matter Only", 
+    "gas": "Multi-Freefall Model"
+}
 
 class Terminal:
     ''' Context manager for running commands in the terminal from Python. '''
@@ -69,10 +64,17 @@ def clear_figures():
     with Terminal() as terminal:
         
         os.chdir(save_dir)
-        os.system("$SHELL clear_figures.sh")
+        for dir in os.listdir():
+            if os.path.isdir(dir) and dir != "legacy":
+                for subdir in os.listdir(os.path.join(".", dir)):
+                    subdir_path = os.path.join(".", dir, subdir)
+                    subdir_path_legacy = os.path.join(".", "legacy", dir, subdir)
+                    if not os.path.isdir(subdir_path): os.mkdir(subdir_path)
+                    if len(os.listdir(subdir_path)) > 0:
+                        os.system("mv %s/* %s/" % (subdir_path, subdir_path_legacy))
 
 
-def save_fig(fig_name, filetype="png", dpi=300):
+def save_fig(fig_name, filetype="png", dpi=300, round=None, subdir="all"):
     '''
     Save the current matplotlib figure.
 
@@ -80,10 +82,17 @@ def save_fig(fig_name, filetype="png", dpi=300):
     name (string): figure name
     filetype (string): file type
     dpi (int): dots per inch
+    round (int): round of simulation runs
+    subdir (str): subdirectory
     '''
     datetime_string = datetime.now().strftime("%m%d%Y%H%M")
     filename = "%s-%s.%s" % (fig_name, datetime_string, filetype)
-    plt.savefig(os.path.join(save_dir, "all", filename), bbox_inches="tight", dpi=dpi)
+    if round == None:
+        my_save_dir = os.path.join(save_dir, subdir)
+    else: 
+        my_save_dir = os.path.join(save_dir, "round%d", subdir)
+    if not os.path.isdir(my_save_dir): os.mkdir(my_save_dir)
+    plt.savefig(os.path.join(my_save_dir, filename), bbox_inches="tight", dpi=dpi)
     print("Saved figure as '%s'" % filename)
         
 
@@ -177,7 +186,7 @@ def coord_conv(coord, sys1, sys2):
     elif sys1 == CART and sys2 == CYL:
         
         coord_new[S] = np.sqrt(coord[X]**2 + coord[Y]**2),
-        coord_new[PH2] = np.arctan2(self.coord[Y], self.coord[X])
+        coord_new[PH2] = np.arctan2(coord[Y], coord[X])
         coord_new[Z] = coord[Z]
         
     elif sys1 == SPH and sys2 == CART:
@@ -278,7 +287,8 @@ class Sim(object):
     Simulation object.
     
     Args
-    sim_idx (int): index of the simulation (ALPHA_EPS0P01, ALPHA_EPS0P1, ALPHA_EPS1P0, DMO, GAS)
+    sim_round (int): round of simulation runs
+    sim_name (str): name of the simulation
     npz_file (str): filename of the npz file with the simulation data
     
     Attrs
@@ -368,7 +378,6 @@ class Sim(object):
     vel_turb: turbulent velocity (cached property)
     ang_mom: angular momentum (cached property)
     
-    sim_name (str): name of the simulation
     sim_latex (str): latex string of the simulation, for plotting
     sim_dir (str): path to the simulation data
     save_dir (str): path of the directory to save figures
@@ -377,13 +386,15 @@ class Sim(object):
     epsilon_SF: array of star formation efficiencies
     summury_stats: list of Stat objects
     '''
-    def __init__(self, sim_idx, npz_file, epsilon_SF=None):
+    def __init__(self, sim_round, sim_name, npz_file, epsilon_SF=None):
         
-        self.sim_idx = sim_idx
-        self.sim_name = list_of_sim_name[self.sim_idx]
-        self.sim_latex = list_of_sim_latex[self.sim_idx]
-        self.sim_dir = os.path.join(sim_base_dir, self.sim_name)
-        self.save_dir = os.path.join(save_dir, self.sim_name)
+        self.sim_round = sim_round
+        self.sim_name = sim_name
+        self.sim_latex = sim_name_to_latex[self.sim_name]
+        self.sim_dir = os.path.join(sim_base_dir, "round%d" % self.sim_round, self.sim_name)
+        self.save_dir = os.path.join(save_dir, "round%d" % self.sim_round, self.sim_name)
+        if not os.path.isdir(self.save_dir):
+            os.mkdir(self.save_dir)
         
         os.chdir(self.sim_dir)
         print("Moving to directory '%s'." % self.sim_dir)
@@ -430,10 +441,7 @@ class Sim(object):
         filetype (string): file type
         dpi (int): dots per inch
         '''
-        datetime_string = datetime.now().strftime("%m%d%Y%H%M")
-        filename = "%s-%s.%s" % (fig_name, datetime_string, filetype)
-        plt.savefig(os.path.join(self.save_dir, filename), bbox_inches="tight", dpi=dpi)
-        print("Saved figure as '%s'" % filename)
+        save_fig(fig_name, filetype=filetype, dpi=dpi, round=self.sim_round, subdir=self.sim_name)
         
     def create_sph_grid(self):
         '''
@@ -450,25 +458,25 @@ class Sim(object):
         self.dA_hph = self.coord_sph[R]**2 * np.sin(self.coord_sph[H]) * self.dx_sph[H] * self.dx_sph[PH]
     
     def a_exp_to_proper_time(self, a):
-        '''Convert expansion factor to proper time.'''
+        ''' Convert expansion factor to proper time.'''
         integrand = lambda a: (self.Omega_m0 * a**(-1) + self.Omega_k0 + self.Omega_L0 * a**2)**(-1/2)
         t = quad(integrand, 0, a)[0] / self.H0
         return t
 
     def a_exp_to_conformal_time(self, a):
-        '''Convert expansion factor to conformal time.'''
+        ''' Convert expansion factor to conformal time.'''
         integrand = lambda a: (self.Omega_m0 * a + self.Omega_k0 * a**2 + self.Omega_L0 * a**4)**(-1/2)
         tau = const.c * quad(integrand, 0, a)[0] / self.H0
         return tau
 
     def proper_time_to_a_exp(self, t):
-        '''Convert proper time to expansion rate.'''
-        a = fsolve(lambda a: (a_exp_to_proper_time(a) - t) * self.H0, self.a_exp)
+        ''' Convert proper time to expansion rate.'''
+        a = fsolve(lambda a: (self.(a) - t) * self.H0, self.a_exp)
         return a
 
     def conformal_time_to_a_exp(self, tau):
-        '''Convert conformal time to expansion rate.'''
-        a = fsolve(lambda a: (a_exp_to_conformal_time(a) - tau) * self.H0, self.a_exp)
+        ''' Convert conformal time to expansion rate.'''
+        a = fsolve(lambda a: (self.a_exp_to_conformal_time(a) - tau) * self.H0, self.a_exp)
         return a
 
     def interp_to_sph(self, field):
