@@ -11,8 +11,20 @@ epsilon = 1e-30 # small number
 analysis_dir = "/home/za9132/analysis"
 save_dir = os.path.join(analysis_dir, "figures")
 sim_base_dir = "/home/za9132/scratch/romain"
-list_of_sim_name = ["alpha_eps0p01", "alpha_eps0p1", "alpha_eps1p0", "dmo", "gas"]
-list_of_sim_latex = [r"$\varepsilon_{\rm SF} = 0.01$", r"$\varepsilon_{\rm SF} = 0.1$", r"$\varepsilon_{\rm SF} = 1.0$", "Dark Matter Only", "Multi-Freefall Model"]
+list_of_sim_name = [
+    "old_sims/alpha_eps0p01", 
+    "old_sims/alpha_eps0p1", 
+    "old_sims/alpha_eps1p0", 
+    "old_sims/dmo", 
+    "old_sims/gas"
+]
+list_of_sim_latex = [
+    r"$\varepsilon_{\rm SF} = 0.01$", 
+    r"$\varepsilon_{\rm SF} = 0.1$", 
+    r"$\varepsilon_{\rm SF} = 1.0$", 
+    "Dark Matter Only", 
+    "Multi-Freefall Model
+]
 
 
 class Terminal:
@@ -873,6 +885,33 @@ class Sim(object):
         curl_field[Y] = np.gradient(field[X], self.dx, axis=Z) - np.gradient(field[Z], self.dx, axis=X)
         curl_field[Z] = np.gradient(field[Y], self.dx, axis=X) - np.gradient(field[X], self.dx, axis=Y)
         return curl_field
+    
+    def laplace(self, field):
+        ''' Compute the Laplacian of a vector field. '''
+        laplace_field = self.div(self.grad(field))
+        return laplace_field
+    
+    def on_face(self, field):
+        ''' Linearly interpolate the value of a field to cell faces. '''
+        field_on_xface = np.zeros((3, self.N+1, self.N, self.N))
+        field_on_yface = np.zeros((3, self.N, self.N+1, self.N))
+        field_on_zface = np.zeros((3, self.N, self.N, self.N+1))
+
+        field_on_xface[:, 1:-1, :, :] = (field[:, 1:, :, :] + field[:, :-1, :, :]) / 2
+        field_on_xface[:, 0, :, :] = field[:, 0, :, :]
+        field_on_xface[:, -1, :, :] = field[:, -1, :, :]
+
+        field_on_yface[:, :, 1:-1, :] = (field[:, :, 1:, :] + field[:, :, :-1, :]) / 2
+        field_on_yface[:, :, 0, :] = field[:, :, 0, :]
+        field_on_yface[:, :, -1, :] = field[:, :, -1, :]
+
+        field_on_zface[:, :, :, 1:-1] = (field[:, :, :, 1:] + field[:, :, :, :-1]) / 2
+        field_on_zface[:, :, :, 0] = field[:, :, :, 0]
+        field_on_zface[:, :, :, -1] = field[:, :, :, -1]
+
+        field_on_face = [field_on_xface, field_on_yface, field_on_zface]
+        return field_on_face
+
     
     @cached_property
     def coord_cyl_at_cart(self):
