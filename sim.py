@@ -23,7 +23,7 @@ list_of_sim_latex = [
     r"$\varepsilon_{\rm SF} = 0.1$", 
     r"$\varepsilon_{\rm SF} = 1.0$", 
     "Dark Matter Only", 
-    "Multi-Freefall Model
+    "Multi-Freefall Model"
 ]
 
 
