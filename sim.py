@@ -1,5 +1,4 @@
 from modules import *
-import sim_config
 
 X, Y, Z = 0, 1, 2 # cartesian coordinate indices
 S, PH2, Z = 0, 1, 2 # cylindrical coordinate indices
@@ -24,7 +23,7 @@ sim_name_to_latex = {
 }
 
 # define custom colormaps
-varying_color = np.array([np.linspace(0, 1, 100)] * 3).T
+varying_color = np.array([np.linspace(0, 1, 256)] * 3).T
 const_color = np.array([[0, 0, 0], [1, 0, 0]])
 cmap_red = dict(red=varying_color, green=const_color, blue=const_color)
 cmap_green = dict(red=const_color, green=varying_color, blue=const_color)
@@ -535,6 +534,8 @@ class Sim(object):
         kwargs_obj = SimpleNamespace(**kwargs)
         
         _, axs = plt.subplots(figsize=figsize, nrows=nrows, ncols=ncols, sharex=sharex, sharey=sharey, squeeze=False)
+
+        func_dict = dict(slice=self.plot_slice_on_ax, rgb_slice=self.plot_rgb_on_ax, AH=self.plot_AH_on_ax)
         
         for arg in args:
             if type(arg) == Arglist:
@@ -551,10 +552,7 @@ class Sim(object):
                 do_ylabel = (j == 0) if sharey else True
 
                 current_args, current_kwargs = self.get_current_args(args, kwargs, i, j)
-                if plot_type == "slice":
-                    im = self.plot_slice_on_ax(ax, *current_args, **current_kwargs, do_xlabel=do_xlabel, do_ylabel=do_ylabel, do_cbar=(not share_cbar))
-                elif plot_type == "AH":
-                    im = self.plot_AH_on_ax(ax, *current_args, **current_kwargs, do_xlabel=do_xlabel, do_ylabel=do_ylabel, do_cbar=(not share_cbar))
+                func_dict[plot_type](ax, *current_args, **current_kwargs, do_xlabel=do_xlabel, do_ylabel=do_ylabel, do_cbar=(not share_cbar))
 
         plt.subplots_adjust(hspace=hspace, wspace=wspace)
 
@@ -574,17 +572,15 @@ class Sim(object):
         
         plt.figure(figsize=figsize)
         ax = plt.gca()
-        if plot_type == "slice":
-            self.plot_slice_on_ax(ax, *args, **kwargs, do_xlabel=True, do_ylabel=True, do_cbar=True)
-        elif plot_type == "AH":
-            self.plot_AH_on_ax(ax, *args, **kwargs, do_xlabel=True, do_ylabel=True, do_cbar=True)
+        func_dict = dict(slice=self.plot_slice_on_ax, rgb_slice=self.plot_rgb_on_ax, AH=self.plot_AH_on_ax)
+        func_dict[plot_type](ax, *args, **kwargs, do_xlabel=True, do_ylabel=True, do_cbar=True)
     
     def get_field_input(self, field, field_name='Field'):
         ''' Return a field given an input, which can either be a field or a string. '''
         if type(field) in [str, np.str_]:
             assert hasattr(self, field), "%s must be an attribute of Sim object if passed as string." % field_name
             field = getattr(self, field)
-        return field
+        return np.copy(field)
     
     def get_field2d(self, field, **kwargs):
         '''
@@ -611,7 +607,7 @@ class Sim(object):
         '''
         kwargs_obj = SimpleNamespace(**kwargs)
         
-        field = self.get_field_input(field, "Field")
+        field = self.get_field_input(field, "Field") / kwargs_obj.unit
         weight = self.get_field_input(kwargs_obj.weight, "Weight")
         cond = self.get_field_input(kwargs_obj.cond, "Conditional array")
         
@@ -672,6 +668,7 @@ class Sim(object):
         kwargs_obj = SimpleNamespace(**kwargs)
 
         coord1_idx, coord2_idx, coord12d, coord22d, field2d = self.get_field2d(field, **kwargs)
+        if kwargs_obj.do_log: extrema = (np.log10(extrema[0]), np.log10(extrema[1]))
 
         if kwargs_obj.cbar_tick_increment == None: kwargs_obj.cbar_tick_increment = (extrema[1] - extrema[0]) / 10
         
@@ -684,7 +681,7 @@ class Sim(object):
         if kwargs_obj.do_xlabel: ax.set_xlabel(coord1_label)
         if kwargs_obj.do_ylabel: ax.set_ylabel(coord2_label)
 
-        if kwargs.width != None:
+        if kwargs_obj.width != None:
             ax.set_xlim(-kwargs_obj.width / const.kpc, kwargs_obj.width / const.kpc)
             ax.set_ylim(-kwargs_obj.width / const.kpc, kwargs_obj.width / const.kpc)
 
@@ -693,49 +690,80 @@ class Sim(object):
         if kwargs_obj.isocontours != None:
             if np.all(kwargs_obj.isocontour_field) == None: kwargs_obj.isocontour_field = field
             kwargs_isocontour = dict(kwargs, do_log=False)
-            _, _, _, _, isocontour_field2d = self.get_field2d(kwargs.isocontour_field, **kwargs_isocontour)
+            _, _, _, _, isocontour_field2d = self.get_field2d(kwargs_obj.isocontour_field, **kwargs_isocontour)
             ax.contour(coord12d / const.kpc, coord22d / const.kpc, isocontour_field2d, levels=kwargs_obj.isocontours, colors=kwargs_obj.color_isocontour, linewidths=2, linestyles='solid')
 
-        if kwargs.plot_star:
+        if kwargs_obj.plot_star:
             in_slice_star = np.abs(self.coord_star[slice] - kwargs_obj.slice_coord) < self.dx
             ax.plot(self.coord_star[coord1_idx][in_slice_star] / const.kpc, self.coord_star[coord2_idx][in_slice_star] / const.kpc, marker='*', color=kwargs_obj.color_star, linestyle='')
 
-        if kwargs.plot_dm:
-            in_slice_dm = np.abs(self.coord_dm[slice] - kwargs.slice_coord) < self.dx
+        if kwargs_obj.plot_dm:
+            in_slice_dm = np.abs(self.coord_dm[slice] - kwargs_obj.slice_coord) < self.dx
             ax.plot(self.coord_dm[coord1_idx][in_slice_dm] / const.kpc, self.coord_dm[coord2_idx][in_slice_dm] / const.kpc, marker='.', color=kwargs_obj.color_dm, linestyle='')
 
         return im
     
     def plot_rgb_on_ax(self, ax, field_red, field_green, field_blue, extrema, xlabels=[None, None, None], **kwargs):
-        
+        '''
+        Plot the cross section of a field perpendicular to a coordinate axis.
+
+        Args
+        ax: axis object
+        field_red, field_green, field_blue: fields to map to red, green, and blue
+        extrema (tuple): tuple of min and max field value
+        xlabels (list): list of xlabels of the RGB colorbars
+        kwargs: keyword arguments
+            width (float): width of plot
+            cbar_label (string): colorbar label
+            cbar_tick_increment (float): increment of the colorbar ticks
+            do_xlabel (bool): label x-axis
+            do_ylabel (bool): label y-axis
+            do_cbar (bool): plot a colorbar
+            title (str): title of the plot
+            keyword arguments of self.get_field2d
+        '''
         kwargs_obj = SimpleNamespace(**kwargs)
 
-        _, _, coord12d, coord22d, field_red2d = self.get_field2d(field_red, **kwargs)
+        coord1_idx, coord2_idx, coord12d, coord22d, field_red2d = self.get_field2d(field_red, **kwargs)
         _, _, _, _, field_green2d = self.get_field2d(field_green, **kwargs)
         _, _, _, _, field_blue2d = self.get_field2d(field_blue, **kwargs)
 
-        log_norm = mpl.colors.LogNorm(vmin=kwargs_obj.extrema[0], vmax=kwargs_obj.extrema[1], clip=True)
-        lin_norm = mpl.colors.Normalize(vmin=np.log10(kwargs_obj.extrema), vmax=np.log10(kwargs_obj.extrema[1]), clip=True)
+        if kwargs_obj.do_log: extrema = (np.log10(extrema[0]), np.log10(extrema[1]))
+        norm = mpl.colors.Normalize(vmin=extrema[0], vmax=extrema[1], clip=True)
 
-        red = log_norm(field_red2d).data
-        green = log_norm(field_green2d).data
-        blue = log_norm(field_blue2d).data
+        if kwargs_obj.cbar_tick_increment == None: kwargs_obj.cbar_tick_increment = (extrema[1] - extrema[0]) / 10
+
+        red = norm(field_red2d).data
+        green = norm(field_green2d).data
+        blue = norm(field_blue2d).data
 
         color = np.array([red, green, blue])
         color = np.moveaxis(color, 0, -1)
         plt.pcolormesh(coord12d / const.kpc, coord22d / const.kpc, color)
 
+        coord_labels = [r"$x$ [kpc]", r"$y$ [kpc]", r"$z$ [kpc]"]
+        coord1_label, coord2_label = coord_labels[coord1_idx], coord_labels[coord2_idx]
+        if kwargs_obj.do_xlabel: ax.set_xlabel(coord1_label)
+        if kwargs_obj.do_ylabel: ax.set_ylabel(coord2_label)
+
+        if kwargs_obj.width != None:
+            ax.set_xlim(-kwargs_obj.width / const.kpc, kwargs_obj.width / const.kpc)
+            ax.set_ylim(-kwargs_obj.width / const.kpc, kwargs_obj.width / const.kpc)
+
+        if kwargs_obj.title != None: ax.set_title(kwargs_obj.title)
+
         if kwargs_obj.do_cbar: 
-            
+        
             assert len(xlabels) == 3, "xlabels list must have length 3."
+            divider = make_axes_locatable(ax)
 
             for i in range(3):
-                sm = mpl.cm.ScalarMappable(cmap=[rgb_red, rgb_green, rgb_blue][i], norm=lin_norm)    
+                sm = mpl.cm.ScalarMappable(cmap=[rgb_red, rgb_green, rgb_blue][i], norm=norm)    
                 sm.set_array([])
                 if i < 2: 
-                    self.plot_cbar(ax, sm, extrema, kwargs_obj.cbar_tick_increment, None, "vertical", xlabel=xlabels[i], do_ticks=False)
+                    self.plot_cbar(ax, sm, extrema, kwargs_obj.cbar_tick_increment, None, "vertical", xlabel=xlabels[i], do_ticks=False, size="5%", pad=0.1, divider=divider)
                 else:
-                    self.plot_cbar(ax, sm, extrema, kwargs_obj.cbar_tick_increment, kwargs_obj.cbar_label, "vertical", xlabel=xlabels[i], do_ticks=True)
+                    self.plot_cbar(ax, sm, extrema, kwargs_obj.cbar_tick_increment, kwargs_obj.cbar_label, "vertical", xlabel=xlabels[i], do_ticks=True, size="5%", pad=0.1, divider=divider)
 
     
     def plot_AH_on_ax(self, ax, field2d, extrema, unit=1., do_log=True, nlevels=200, cmap='jet', cbar_label='field', cbar_tick_increment=None, num_axis_lines=12, axis_labels=True, do_xlabel=True, do_ylabel=True, do_cbar=True, cbar_orientation='vertical', title=None):
@@ -803,7 +831,7 @@ class Sim(object):
 
         return im
     
-    def plot_cbar(self, ax, im, extrema, tick_increment, label, orientation, size="5%", pad=0.05, xlabel=None, do_ticks=True):
+    def plot_cbar(self, ax, im, extrema, tick_increment, label, orientation, size="5%", pad=0.05, xlabel=None, do_ticks=True, divider=None):
         '''
         Plot a colorbar.
 
@@ -818,16 +846,18 @@ class Sim(object):
         pad (float): padding of the colorbar
         xlabel (str): colorbar label on the x-axis
         do_ticks (bool): plot ticks on the colorbar
+        divider: axis divider object
         '''
-        divider = make_axes_locatable(ax)
+        if divider == None: divider = make_axes_locatable(ax)
+        ticks = np.arange(extrema[0], extrema[1] + 0.5 * tick_increment, tick_increment) if do_ticks else []
         if orientation == "horizontal":
             cax = divider.append_axes("top", size=size, pad=pad)
-            plt.colorbar(im, ax=ax, cax=cax, ticks=np.arange(extrema[0], extrema[1] + 0.5 * tick_increment, tick_increment), label=label, orientation="horizontal")
+            plt.colorbar(im, ax=ax, cax=cax, ticks=ticks, label=label, orientation="horizontal")
             cax.xaxis.set_ticks_position("top")
             cax.xaxis.set_label_position("top")
         elif orientation == "vertical":
             cax = divider.append_axes("right", size=size, pad=pad)
-            plt.colorbar(im, ax=ax, cax=cax, ticks=np.arange(extrema[0], extrema[1] + 0.5 * tick_increment, tick_increment), label=label, orientation="vertical")
+            plt.colorbar(im, ax=ax, cax=cax, ticks=ticks, label=label, orientation="vertical")
             if xlabel != None: cax.set_xlabel(xlabel)
     
     def calc_radial_profile(self, field, r_lim=None, nbins=100, weight=None, cond=None):

@@ -5,6 +5,7 @@ Modules used by all files.
 import os, subprocess, warnings
 from datetime import datetime
 from tabulate import tabulate
+from types import SimpleNamespace
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -23,3 +24,4 @@ from scipy.signal import welch
 from functools import cached_property
 
 import const
+import sim_config
