@@ -7,6 +7,20 @@ def get_stdout(cmd):
     return stdout
 
 
+def get_dump(a_exp):
+    ''' Get the dump number for a given expansion factor. '''
+    stdout_split = get_stdout("grep aexp output_00*/info*").split()
+    list_of_dump = np.array([int(s[7:12]) for s in stdout_split[::3]])
+    list_of_a_exp = np.array([float(s) for s in stdout_split[2::3]])
+    
+    dump_idx = np.argmin(np.abs(list_of_a_exp - a_exp))
+    a_exp_dump = list_of_a_exp[dump_idx]
+    dump = list_of_dump[dump_idx]
+    print("a_exp = %.3g" % a_exp_dump)
+    
+    return dump
+
+
 class Halo(object):
     '''
     Object for storing data from halo files.
@@ -61,8 +75,6 @@ class Clump(object):
     '''
     def __init__(self, stdout_split):
         
-        stdout_split = stdout.split()
-        
         self.idx = int(stdout_split[0])
         self.level = int(stdout_split[1])
         self.parent_idx = int(stdout_split[2])
@@ -73,9 +85,10 @@ class Clump(object):
         self.mass = float(stdout_split[9])
         self.is_cgs = False
         
-    def convert_to_cgs(self):
+    def convert_to_cgs(self, length_unit, density_unit):
         ''' Convert attributes to cgs units. '''
         if not self.is_cgs:
+            mass_unit = density_unit * length_unit**3
             self.coord *= length_unit
             self.rho_border *= density_unit
             self.rho_max *= density_unit
@@ -83,27 +96,30 @@ class Clump(object):
             self.is_cgs = True
         
 
-def get_biggest_halos(num, use_density=True):
+def get_biggest_halos(num, dump, use_density=True):
     '''
     Find the biggest halos in the simulation and return a list of Halo objects.
     
     Args
     num (int): number of halos to find
+    dump (int): dump number
     use_density (bool): use halo density to define "biggest", rather than halo mass
     
     Returns
     list_of_halo: list of Halo objects
     '''
-    biggest_halo_by_density_stdout = get_stdout("cat output*/halo* | sort -r -nk 2 | head -n 1").split()
+    assert os.path.isdir(os.path.join(".", "output_%.5d" % dump)), "Output directory 'output_%.5d' does not exist." % dump
+    
+    biggest_halo_by_density_stdout = get_stdout("cat output_%.5d/halo* | sort -r -nk 2 | head -n 1" % dump).split()
     biggest_halo_by_density = Halo(biggest_halo_by_density_stdout)
     
-    biggest_halo_by_mass_stdout = get_stdout("cat output*/halo* | sort -r -gk 7 | head -n 1").split()
+    biggest_halo_by_mass_stdout = get_stdout("cat output_%.5d/halo* | sort -r -gk 7 | head -n 1" % dump).split()
     biggest_halo_by_mass = Halo(biggest_halo_by_mass_stdout)
     
     if use_density:
-        list_of_stdout_split = np.array(get_stdout("cat output*/halo* | sort -r -nk 2 | head -n %d" % num).split()).reshape(-1, 7)
+        list_of_stdout_split = np.array(get_stdout("cat output_%.5d/halo* | sort -r -nk 2 | head -n %d" % (dump, num)).split()).reshape(-1, 7)
     else:
-        list_of_stdout_split = np.array(get_stdout("cat output*/halo* | sort -r -gk 7 | head -n %d" % num).split()).reshape(-1, 7)
+        list_of_stdout_split = np.array(get_stdout("cat output_%.5d/halo* | sort -r -gk 7 | head -n %d" % (dump, num)).split()).reshape(-1, 7)
     
     list_of_halo = [Halo(stdout_split) for stdout_split in list_of_stdout_split]
         
@@ -114,8 +130,6 @@ def get_biggest_halos(num, use_density=True):
         return list_of_halo[0]
     else:
         return list_of_halo
-        
-    return list_of_halo
 
 
 def safe_savez(filename, **kwargs):

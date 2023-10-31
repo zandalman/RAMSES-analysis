@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 import matplotlib as mpl
 from matplotlib.lines import Line2D
 from mpl_toolkits.axes_grid1 import make_axes_locatable
+from matplotlib.colors import ListedColormap, LinearSegmentedColormap
 
 from scipy.integrate import quad, quad_vec, trapz, cumtrapz
 from scipy.optimize import fsolve
