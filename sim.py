@@ -1,15 +1,13 @@
 from modules import *
+from read_ramses import move_to_sim_dir, Terminal
 
 X, Y, Z = 0, 1, 2 # cartesian coordinate indices
 S, PH2, Z = 0, 1, 2 # cylindrical coordinate indices
 R, H, PH = 0, 1, 2 # spherical coordinate indices
 CART, CYL, SPH = 0, 1, 2 # coordinate systems
-HYDRO, DM, STAR = 0, 1, 2
+HYDRO, DM, STAR = 0, 1, 2 # object categories
+DEATH, BIRTH = 0, 1 # star log categories
 epsilon = 1e-30 # small number
-
-analysis_dir = "/home/za9132/analysis"
-save_dir = os.path.join(analysis_dir, "figures", "current")
-sim_base_dir = "/home/za9132/scratch/romain"
 
 sim_name_to_latex = {
     "alpha_eps0p01": r"$\varepsilon_{\rm SF} = 0.01$", 
@@ -18,8 +16,10 @@ sim_name_to_latex = {
     "alpha_eps0p01_highres": r"$\varepsilon_{\rm SF} = 0.01$ (highres)", 
     "alpha_eps0p1_highres": r"$\varepsilon_{\rm SF} = 0.1$ (highres)", 
     "alpha_eps1p0_highres": r"$\varepsilon_{\rm SF} = 1.0$ (highres)",
+    "gas_highres": "Multi-Freefall Model (highres)",
     "dmo": "Dark Matter Only", 
-    "gas": "Multi-Freefall Model"
+    "gas": "Multi-Freefall Model",
+    "alpha_eps0p1_movie": r"$\varepsilon_{\rm SF} = 0.1$ (movie)"
 }
 
 # define custom colormaps
@@ -31,16 +31,6 @@ cmap_blue = dict(red=const_color, green=const_color, blue=varying_color)
 rgb_red = LinearSegmentedColormap('rgb_red', segmentdata=cmap_red)
 rgb_green = LinearSegmentedColormap('rgb_green', segmentdata=cmap_green)
 rgb_blue = LinearSegmentedColormap('rgb_blue', segmentdata=cmap_blue)
-
-class Terminal:
-    ''' Context manager for running commands in the terminal from Python. '''
-    def __enter__(self):
-        self.cwd = os.getcwd()
-        return None
-    
-    def __exit__(self, exc_type, exc_value, exc_tb):
-        os.chdir(self.cwd)
-
 
 class Arglist(object):
     ''' Class for lists of function arguments. '''
@@ -57,7 +47,7 @@ def git_commit(git_message=None):
     '''
     with Terminal() as terminal:
         
-        os.chdir(analysis_dir)
+        os.chdir(config.analysis_dir)
         if git_message == None: git_message = "pushing updates to analysis code"
         list_of_filename = ["analysis.ipynb", "yt_to_numpy.ipynb", "analytic.ipynb", "const.py", "sim.py", "modules.py", "read_ramses.py"]
         
@@ -73,7 +63,7 @@ def clear_figures():
     '''
     with Terminal() as terminal:
         
-        os.chdir(save_dir)
+        os.chdir(config.save_dir)
         for dir in os.listdir():
             if os.path.isdir(dir) and dir != "legacy":
                 for subdir in os.listdir(os.path.join(".", dir)):
@@ -98,10 +88,10 @@ def save_fig(fig_name, filetype="png", dpi=300, round=None, subdir="all"):
     datetime_string = datetime.now().strftime("%m%d%Y%H%M")
     filename = "%s-%s.%s" % (fig_name, datetime_string, filetype)
     if round == None:
-        my_save_dir = os.path.join(save_dir, subdir)
+        my_save_dir = os.path.join(config.save_dir, subdir)
     else: 
-        if not os.path.isdir(os.path.join(save_dir, "round%d")): os.mkdir(os.path.join(save_dir, "round%d"))
-        my_save_dir = os.path.join(save_dir, "round%d", subdir)
+        if not os.path.isdir(os.path.join(config.save_dir, "round%d" % round)): os.mkdir(os.path.join(config.save_dir, "round%d" % round))
+        my_save_dir = os.path.join(config.save_dir, "round%d" % round, subdir)
     if not os.path.isdir(my_save_dir): os.mkdir(my_save_dir)
     plt.savefig(os.path.join(my_save_dir, filename), bbox_inches="tight", dpi=dpi)
     print("Saved figure as '%s'" % filename)
@@ -291,8 +281,8 @@ def vec_conv(field, coord, sys1, sys2):
         field_new[PH] = field[PH2]
     
     return field_new
-        
     
+
 class Sim(object):
     '''
     Simulation object.
@@ -402,11 +392,8 @@ class Sim(object):
         self.sim_round = sim_round
         self.sim_name = sim_name
         self.sim_latex = sim_name_to_latex[self.sim_name]
-        self.sim_dir = os.path.join(sim_base_dir, "round%d" % self.sim_round, self.sim_name)
-        self.save_dir = os.path.join(save_dir, "round%d" % self.sim_round, self.sim_name)
-        
-        os.chdir(self.sim_dir)
-        print("Moving to directory '%s'." % self.sim_dir)
+        self.sim_dir = move_to_sim_dir(self.sim_round, self.sim_name)
+        self.save_dir = os.path.join(config.save_dir, "round%d" % self.sim_round, self.sim_name)
         
         self.epsilon_SF = epsilon_SF
         self.alpha_vir_crit = 10.
@@ -516,7 +503,7 @@ class Sim(object):
 
         return current_args, current_kwargs
     
-    def plot_grid(self, *args, figsize=None, nrows=1, ncols=1, sharex=False, sharey=False, hspace=None, wspace=None, share_cbar=False, plot_type="slice", **kwargs):
+    def plot_grid(self, *args, figsize=None, nrows=1, ncols=1, sharex=False, sharey=False, hspace=None, wspace=None, share_cbar=False, plot_type="slice", do_axes_labels=True, **kwargs):
         '''
         Wrapper function for plot_slice_on_ax, for a single plot.
 
@@ -529,8 +516,9 @@ class Sim(object):
         hspace (float): height spacing between subplots
         wspace (float): width spacing between subplots
         plot_type (str): plot type ['slice', 'rgb_slice', 'AH']
+        do_axis_labels (bool): use axis labels
         '''
-        kwargs = dict(sim_config.defaults, **kwargs)
+        kwargs = dict(config.defaults, **kwargs)
         kwargs_obj = SimpleNamespace(**kwargs)
         
         _, axs = plt.subplots(figsize=figsize, nrows=nrows, ncols=ncols, sharex=sharex, sharey=sharey, squeeze=False)
@@ -548,15 +536,20 @@ class Sim(object):
         for i, axs1d in enumerate(axs):
             for j, ax in enumerate(axs1d):
                 
-                do_xlabel = (i == len(axs1d)-1) if sharex else True
-                do_ylabel = (j == 0) if sharey else True
+                if do_axes_labels:
+                    do_xlabel = (i == len(axs1d)-1) if sharex else True
+                    do_ylabel = (j == 0) if sharey else True
+                else:
+                    do_xlabel = do_ylabel = 0
 
                 current_args, current_kwargs = self.get_current_args(args, kwargs, i, j)
-                func_dict[plot_type](ax, *current_args, **current_kwargs, do_xlabel=do_xlabel, do_ylabel=do_ylabel, do_cbar=(not share_cbar))
+                im = func_dict[plot_type](ax, *current_args, **current_kwargs, do_xlabel=do_xlabel, do_ylabel=do_ylabel, do_cbar=(not share_cbar))
 
         plt.subplots_adjust(hspace=hspace, wspace=wspace)
 
-        if share_cbar: plt.colorbar(im, ax=axs, ticks=np.arange(kwargs_obj.extrema[0], kwargs_obj.extrema[1] + 0.5 * kwargs_obj.extrema.cbar_tick_increment, kwargs_obj.extrema.cbar_tick_increment), label=kwargs_obj.extrema.cbar_label)
+        if share_cbar: 
+            if kwargs_obj.do_log: kwargs_obj.extrema = (np.log10(kwargs_obj.extrema[0]), np.log10(kwargs_obj.extrema[1]))
+            plt.colorbar(im, ax=axs, ticks=np.arange(kwargs_obj.extrema[0], kwargs_obj.extrema[1] + 0.5 * kwargs_obj.cbar_tick_increment, kwargs_obj.cbar_tick_increment), label=kwargs_obj.cbar_label, fraction=0.015, pad=0.02)
     
     def plot(self, *args, figsize=None, plot_type="slice", **kwargs):
         '''
@@ -568,7 +561,7 @@ class Sim(object):
         figsize: figure size
         plot_type (str): plot type ['slice', 'rgb_slice', 'AH']
         '''
-        kwargs = dict(sim_config.defaults, **kwargs)
+        kwargs = dict(config.defaults, **kwargs)
         
         plt.figure(figsize=figsize)
         ax = plt.gca()
@@ -765,6 +758,7 @@ class Sim(object):
                 else:
                     self.plot_cbar(ax, sm, extrema, kwargs_obj.cbar_tick_increment, kwargs_obj.cbar_label, "vertical", xlabel=xlabels[i], do_ticks=True, size="5%", pad=0.1, divider=divider)
 
+        return sm
     
     def plot_AH_on_ax(self, ax, field2d, extrema, unit=1., do_log=True, nlevels=200, cmap='jet', cbar_label='field', cbar_tick_increment=None, num_axis_lines=12, axis_labels=True, do_xlabel=True, do_ylabel=True, do_cbar=True, cbar_orientation='vertical', title=None):
         '''
