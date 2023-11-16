@@ -62,16 +62,8 @@ def clear_figures():
     Move all current figures to legacy folder.
     '''
     with Terminal() as terminal:
-        
         os.chdir(config.save_dir)
-        for dir in os.listdir():
-            if os.path.isdir(dir) and dir != "legacy":
-                for subdir in os.listdir(os.path.join(".", dir)):
-                    subdir_path = os.path.join(".", dir, subdir)
-                    subdir_path_legacy = os.path.join(".", "legacy", dir, subdir)
-                    if not os.path.isdir(subdir_path): os.mkdir(subdir_path)
-                    if len(os.listdir(subdir_path)) > 0:
-                        os.system("mv %s/* %s/" % (subdir_path, subdir_path_legacy))
+        os.system("mv *.png ../legacy/")
 
 
 def save_fig(fig_name, filetype="png", dpi=300, round=None, subdir="all"):
@@ -283,6 +275,58 @@ def vec_conv(field, coord, sys1, sys2):
     return field_new
     
 
+def calc_phase(field1, field2, extrema1, extrema2, do_log1=True, do_log2=True, cond=None, nbins=30, weight=None):
+    '''
+    Compute distribution of a quantity in a two-dimensional phase space.
+
+    Args
+    field1, field2: fields
+    extrema1, extrema2: tuples of max and min field values
+    do_log1, do_log2 (bool): space bins logorithmically
+    cond: conditional array to select a specific region
+    nbins (int): number of bins
+    weight: weight for the bins
+
+    Returns
+    field1_2d, field2_2d: array of field bins
+    weight_2d: array of weight per bin
+    '''
+    if do_log1: 
+        field1 = np.log10(field1)
+        extrema1 = (np.log10(extrema1[0]), np.log10(extrema1[1]))
+
+    if do_log2:
+        field2 = np.log10(field2)
+        extrema2 = (np.log10(extrema2[0]), np.log10(extrema2[1]))
+
+    if np.all(weight) == None: weight = 1.
+    if np.all(cond) == None: cond = 1.
+
+    hist, x_bins, y_bins = np.histogram2d(field1.flatten(), field2.flatten(), weights=(weight * cond).flatten(), bins=(nbins, nbins), range=[extrema1, extrema2])
+
+    if do_log1:
+        field1_2d = 10**(x_bins[:-1] + np.diff(x_bins)[0])
+    else:
+        field1_2d = x_bins[:-1] + np.diff(x_bins)[0]
+
+    if do_log2:
+        field2_2d = 10**(y_bins[:-1] + np.diff(y_bins)[0])
+    else:
+        field2_2d = y_bins[:-1] + np.diff(y_bins)[0]
+
+    weight_2d = hist.T
+
+    return field1_2d, field2_2d, weight_2d
+
+
+cubic = lambda x, a, b, c, d: a + b*x + c*x**2 + d*x**3
+def get_biggest_halo_coord_cubic(a_exp):
+    '''
+    Estimate the coordinates of the biggest halo using a cubic fit to each coordinate.
+    '''
+    biggest_halo_coord = np.array([cubic(a_exp, *config.halo_poptx), cubic(a_exp, *config.halo_popty), cubic(a_exp, *config.halo_poptz)])
+    return biggest_halo_coord
+
 class Sim(object):
     '''
     Simulation object.
@@ -354,8 +398,10 @@ class Sim(object):
     coord_star: coordinates of star particles
     coord_sph_star: spherical coordinates of star particles
     mass_star: star particle masses
+    tau_starbirth: star particle conformal birth times
     time_starbirth: star particle birth times
     age_star: star particle ages
+    id_star: star particle ids
     
     density: density
     n_H: Hydrogen number density (cached property)
@@ -372,6 +418,7 @@ class Sim(object):
     alpha_vir: virial parameter (cached property)
     ion_frac: ionization fraction (cached property)
     SFR_density: star formation rate density (cached property)
+    b_turb: turbulence forcing parameter (cached property)
     
     vel_vec: velocity vector
     vel_vec_sph_at_cart: velocity vector in spherical coordinates on the Cartesian grid (cached property)
@@ -426,7 +473,7 @@ class Sim(object):
         self.time_now = self.a_exp_to_proper_time(self.a_exp)
         self.universe_age = self.a_exp_to_proper_time(1.)
         
-        self.time_starbirth = (self.tau_starbirth / self.H0 + self.universe_age)
+        self.time_starbirth = self.tau_starbirth / self.H0 + self.universe_age
         self.age_star = self.time_now - self.time_starbirth
         
         self.cond_hydro = np.ones_like(self.density, dtype=bool)
@@ -560,6 +607,9 @@ class Sim(object):
         **kwargs: keyword arguments to be passed to plotting function
         figsize: figure size
         plot_type (str): plot type ['slice', 'rgb_slice', 'AH']
+
+        Returns
+        ax
         '''
         kwargs = dict(config.defaults, **kwargs)
         
@@ -567,6 +617,7 @@ class Sim(object):
         ax = plt.gca()
         func_dict = dict(slice=self.plot_slice_on_ax, rgb_slice=self.plot_rgb_on_ax, AH=self.plot_AH_on_ax)
         func_dict[plot_type](ax, *args, **kwargs, do_xlabel=True, do_ylabel=True, do_cbar=True)
+        return ax
     
     def get_field_input(self, field, field_name='Field'):
         ''' Return a field given an input, which can either be a field or a string. '''
@@ -760,7 +811,7 @@ class Sim(object):
 
         return sm
     
-    def plot_AH_on_ax(self, ax, field2d, extrema, unit=1., do_log=True, nlevels=200, cmap='jet', cbar_label='field', cbar_tick_increment=None, num_axis_lines=12, axis_labels=True, do_xlabel=True, do_ylabel=True, do_cbar=True, cbar_orientation='vertical', title=None):
+    def plot_AH_on_ax(self, ax, field2d, extrema, unit=1., do_log=True, nlevels=200, cmap='jet', cbar_label='field', cbar_tick_increment=None, num_axis_lines=12, axis_labels=True, do_xlabel=True, do_ylabel=True, do_cbar=True, cbar_orientation='vertical', title=None, **kwargs):
         '''
         Plot a spherical slice of a field using the Aitoff-Hammer projection.
 
@@ -885,45 +936,12 @@ class Sim(object):
         return r_1d, field_1d
 
 
-    def calc_phase(self, field1, field2, extrema1, extrema2, do_log1=True, do_log2=True, cond=None, nbins=30):
+    def calc_phase(self, *args, **kwargs):
         '''
-        Compute distribution of mass in a two-dimensional phase space.
-
-        Args
-        field1, field2: fields
-        extrema1, extrema2: tuples of max and min field values
-        do_log1, do_log2 (bool): space bins logorithmically
-        cond: conditional array to select a specific region
-        nbins (int): number of bins
-
-        Returns
-        field1_2d, field2_2d: array of field bins
-        mass_2d: array of mass per bin
+        Wrapper for calc_phase weighting by mass.
         '''
-        if do_log1: 
-            field1 = np.log10(field1)
-            extrema1 = (np.log10(extrema1[0]), np.log10(extrema1[1]))
-
-        if do_log2:
-            field2 = np.log10(field2)
-            extrema2 = (np.log10(extrema2[0]), np.log10(extrema2[1]))
-
-        if np.all(cond) == None: cond = 1.
-
-        hist, x_bins, y_bins = np.histogram2d(field1.flatten(), field2.flatten(), weights=(self.density * self.dV * cond).flatten(), bins=(nbins, nbins), range=[extrema1, extrema2])
-
-        if do_log1:
-            field1_2d = 10**(x_bins[:-1] + np.diff(x_bins)[0])
-        else:
-            field1_2d = x_bins[:-1] + np.diff(x_bins)[0]
-
-        if do_log2:
-            field2_2d = 10**(y_bins[:-1] + np.diff(y_bins)[0])
-        else:
-            field2_2d = y_bins[:-1] + np.diff(y_bins)[0]
-
-        mass_2d = hist.T
-
+        weight = self.density * self.dV
+        field1_2d, field2_2d, mass_2d = calc_phase(*args, weight=weight, **kwargs)
         return field1_2d, field2_2d, mass_2d
 
 
@@ -1134,15 +1152,31 @@ class Sim(object):
         '''
         t_ff = np.sqrt(3 * np.pi / (32 * const.G * self.density)) # free-fall time
         if self.epsilon_SF == None:
-            b = 0.4 # turbulence forcing parameter
+            b_turb = 1.0 # turbulence forcing parameter
             s_crit = np.log(self.alpha_vir * (1 + (2 * self.mach_turb**4) / (1 + self.mach_turb**2))) # lognormal critical density for star formation
-            sigma_s = np.sqrt(np.log(1 + b**2 * self.mach_turb**2)) # standard deviation of the lognormal subgrid density distribution
+            sigma_s = np.sqrt(np.log(1 + b_turb**2 * self.mach_turb**2)) # standard deviation of the lognormal subgrid density distribution
             self.epsilon_SF = 1/2 * np.exp(3/8 * sigma_s**2) * (1 + erf((sigma_s**2 - s_crit) / np.sqrt(2 * sigma_s**2))) # star formation efficiency
             SFR_density = self.epsilon_SF * self.density / t_ff 
         else:
             SFR_density = self.epsilon_SF * self.density / t_ff
             SFR_density[self.alpha_vir < self.alpha_vir_crit] = 0.
         return SFR_density
+    
+    @cached_property
+    def b_turb(self):
+        '''
+        Turbulence forcing parameter
+
+        Heuristically combine the divergence and the curl of the velocity
+        based on eq. 23 of Federrath+2010 (https://arxiv.org/pdf/0905.1060.pdf)
+        '''
+        vel_div = self.div(self.vel_vec)
+        vel_curl = self.curl(self.vel_vec)
+        E_div = norm(vel_div)**2
+        E_curl = norm(vel_curl)**2
+        zeta = E_div / (E_div + E_curl)
+        b_turb = 1/3 + 2/3 * zeta**3
+        return b_turb
     
     @property
     def summary_stats(self):

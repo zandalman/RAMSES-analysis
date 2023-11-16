@@ -5,7 +5,7 @@ S, PH2, Z = 0, 1, 2 # cylindrical coordinate indices
 R, H, PH = 0, 1, 2 # spherical coordinate indices
 CART, CYL, SPH = 0, 1, 2 # coordinate systems
 HYDRO, DM, STAR = 0, 1, 2 # object categories
-DEATH, BIRTH = 0, 1 # star log categories
+BIRTH, DEATH = 0, 1 # star log categories
 epsilon = 1e-30 # small number
 class Terminal:
     ''' Context manager for running commands in the terminal from Python. '''
@@ -37,7 +37,7 @@ def get_list_of_dump():
     ''' Get array of dump numbers. '''
     num_dump = []
     for filename in sorted(os.listdir()):
-        if filename[:6] == 'output':
+        if filename[:6] == 'output' and os.path.isdir(filename):
             num_dump.append(int(filename[7:]))
     num_dump = np.array(num_dump)
     return num_dump
@@ -94,7 +94,7 @@ def get_info(dump):
     info.energy_density_unit = info.density_unit * info.vel_unit**2
     info.amr_level_reduce_exp = -min(-4, int(np.floor(np.log2(info.a_exp))))
     info.amr_level_max = info.amr_level_sim_max - info.amr_level_coarse - info.amr_level_reduce_exp
-    info.H0 *= 1 / info.time_unit
+    info.H0 *= const.km / const.Mpc
     return info
 
 
@@ -181,16 +181,18 @@ def get_clump_cat(dump, cgs=False):
     return clump_cat
 
 
-def get_star_cat(cgs=False):
+def get_star_cat(cgs=False, log=False, a_exp_max=1.0):
     ''' 
     Get clump catalog. 
     
     Args
-    dump (int): dump number
     cgs (bool): use cgs units
+    log (bool): log progress
+    max_a_exp (float): maximum expansion factor
         
     Returns
     starbirth_cat, stardeath_cat: star catalog SimpleNamespace for star formation and supernovae events
+        num_dump (int): dump in which event occurs
         level (int): AMR level of cell
         mass (float): mass of star particle
         coord (float): coordinate of star particle
@@ -199,8 +201,11 @@ def get_star_cat(cgs=False):
         metallicity (float): metallicity of cell
         energy_turb (float): turbulent energy of cell
     '''
-    level, mass, x, y, z, density, pressure, metallicity, energy_turb, tag = [], [], [], [], [], [], [], [], [], []
-    for dump in get_list_of_dump():
+    num_dump, id, level, mass, x, y, z, density, temperature, metallicity, energy_turb, event = np.array([]), np.array([]), np.array([]), np.array([]), np.array([]), np.array([]), np.array([]), np.array([]), np.array([]), np.array([]), np.array([]), np.array([])
+    list_of_dump = get_list_of_dump()
+    if log: print("Reading from %d dumps" % len(list_of_dump))
+    for dump in list_of_dump:
+        print("Reading dump %d..." % dump)
         info = get_info(dump)
         for i in range(0, info.ncpu):
             filename = "output_%.5d/stars_%.5d.out%.5d" % (dump, dump, i+1)
@@ -209,27 +214,74 @@ def get_star_cat(cgs=False):
                     num_lines = len(f.readlines())
                 if num_lines > 1:
                     star = ascii.read(filename)
-                    level += list(star['ilevel'].data)
-                    mass += list(star['mp'].data)
-                    x += list(star['xp1'].data)
-                    y += list(star['xp2'].data)
-                    z += list(star['xp3'].data)
-                    density += list(star['u1'].data)
-                    pressure += list(star['u5'].data)
-                    metallicity += list(star['u6'].data)
-                    energy_turb += list(star['u7'].data)
-                    tag += list(star['tag'].data)
-    level, mass, x, y, z, density, pressure, metallicity, energy_turb, tag = np.array(level), np.array(mass), np.array(x), np.array(y), np.array(z), np.array(density), np.array(pressure), np.array(metallicity), np.array(energy_turb), np.array(tag)
-    starbirth_cat = SimpleNamespace(level=level[tag==BIRTH], mass=mass[tag==BIRTH], coord=np.array([x[tag==BIRTH], y[tag==BIRTH], z[tag==BIRTH]]), density=density[tag==BIRTH], pressure=pressure[tag==BIRTH], metallicity=metallicity[tag==BIRTH], energy_turb=energy_turb[tag==BIRTH])
-    stardeath_cat = SimpleNamespace(level=level[tag==DEATH], mass=mass[tag==DEATH], coord=np.array([x[tag==DEATH], y[tag==DEATH], z[tag==DEATH]]), density=density[tag==DEATH], pressure=pressure[tag==DEATH], metallicity=metallicity[tag==DEATH], energy_turb=energy_turb[tag==DEATH])
-    if cgs:
-        for star_cat in [starbirth_cat, stardeath_cat]:
-            star_cat.mass *= info.mass_unit
-            star_cat.coord *= info.length_unit
-            star_cat.density *= info.density_unit
-            star_cat.pressure *= info.energy_density_unit
-            star_cat.energy_turb *= info.vel_unit**2
+                    num_dump = np.concatenate((num_dump, np.full_like(np.array(star['ilevel'].data), dump)))
+                    id = np.concatenate((id, np.array(star['id'].data)))
+                    level = np.concatenate((level, np.array(star['ilevel'].data)))
+                    metallicity = np.concatenate((metallicity, np.array(star['u6'].data)))
+                    event = np.concatenate ((event, np.array(star['event'].data)))
+                    if cgs:
+                        mass = np.concatenate((mass, np.array(star['mp'].data) * info.mass_unit))
+                        x = np.concatenate((x, np.array(star['xp1'].data) * info.length_unit))
+                        y = np.concatenate((y, np.array(star['xp2'].data) * info.length_unit))
+                        z = np.concatenate((z, np.array(star['xp3'].data) * info.length_unit))
+                        density = np.concatenate((density, np.array(star['u1'].data) * info.density_unit))
+                        temperature = np.concatenate((temperature, np.array(star['u5'].data)))
+                        energy_turb = np.concatenate((energy_turb, np.array(star['u7'].data) * info.vel_unit**2))
+                    else:
+                        mass = np.concatenate((mass, np.array(star['mp'].data)))
+                        x = np.concatenate((x, np.array(star['xp1'].data)))
+                        y = np.concatenate((y, np.array(star['xp2'].data)))
+                        z = np.concatenate((z, np.array(star['xp3'].data)))
+                        density = np.concatenate((density, np.array(star['u1'].data)))
+                        temperature = np.concatenate((temperature, np.array(star['u5'].data)))
+                        energy_turb = np.concatenate((energy_turb, np.array(star['u7'].data)))
+        if info.a_exp > a_exp_max: break
+    starbirth_cat = SimpleNamespace(num_dump=num_dump[event==BIRTH], id=id[event==BIRTH], level=level[event==BIRTH], mass=mass[event==BIRTH], coord=np.array([x[event==BIRTH], y[event==BIRTH], z[event==BIRTH]]), density=density[event==BIRTH], pressure=pressure[event==BIRTH], metallicity=metallicity[event==BIRTH], energy_turb=energy_turb[event==BIRTH])
+    stardeath_cat = SimpleNamespace(num_dump=num_dump[event==DEATH], id=id[event==DEATH], level=level[event==DEATH], mass=mass[event==DEATH], coord=np.array([x[event==DEATH], y[event==DEATH], z[event==DEATH]]), density=density[event==DEATH], pressure=pressure[event==DEATH], metallicity=metallicity[event==DEATH], energy_turb=energy_turb[event==DEATH])
     return starbirth_cat, stardeath_cat
+
+
+def read_partfile(dump):
+    '''
+    Read the particle files and extract the star ids and birthtimes.
+
+    Args
+    dump (int): dump number
+
+    Returns
+    id_star: array of star particle ids
+    time_starbirth: array of star birthtimes
+    '''
+    info = get_info(dump)
+    
+    # initialize arrays
+    id_star = np.array([])
+    tau_starbirth = np.array([])
+
+    # read particle files
+    for i in range(1, info.ncpu+1):
+        partfile = os.path.join("output_%.5d" % dump, "part_%.5d.out%.5d" % (dump, i))
+        with FortranFile(partfile, 'r') as f:
+            _, _, _ = f.read_ints('i'), f.read_ints('i'), f.read_ints('i')
+            _, _, _, _, _ = f.read_reals('f8'), f.read_reals('f4'), f.read_reals('f8'), f.read_reals('f8'), f.read_reals('f4')
+            _, _, _ = f.read_reals('f8'), f.read_reals('f8'), f.read_reals('f8') # position
+            _, _, _ = f.read_reals('f8'), f.read_reals('f8'), f.read_reals('f8') # velocity
+            _ = f.read_reals('f8') # mass
+            id_part = f.read_ints('i') # id
+            _ = f.read_ints('i') # level
+            type_part = f.read_ints('b') # family
+            _ = f.read_ints('b') # tag
+            tau_partbirth = f.read_reals('f8') # birthtime
+            _ = f.read_reals('f8') # metallicity
+
+            id_star = np.concatenate((id_star, id_part[type_part==STAR]))
+            tau_starbirth = np.concatenate((tau_starbirth, tau_partbirth[type_part==STAR]))
+
+    integrand = lambda a: (info.Omega_m0 * a**(-1) + info.Omega_k0 + info.Omega_L0 * a**2)**(-1/2)
+    age_universe = quad(integrand, 0, 1)[0] / info.H0
+    time_starbirth = tau_starbirth / info.H0 + age_universe
+
+    return id_star, time_starbirth
 
 
 def safe_savez(filename, **kwargs):
