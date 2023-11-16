@@ -49,10 +49,9 @@ def git_commit(git_message=None):
         
         os.chdir(config.analysis_dir)
         if git_message == None: git_message = "pushing updates to analysis code"
-        list_of_filename = ["analysis.ipynb", "yt_to_numpy.ipynb", "analytic.ipynb", "const.py", "sim.py", "modules.py", "read_ramses.py"]
         
-        for filename in list_of_filename:
-            os.system("git add %s" % filename)
+        os.system("git add *.py")
+        os.system("git add *.ipynb")
         os.system("git commit -m '%s'" % git_message)
         os.system("git push")
         
