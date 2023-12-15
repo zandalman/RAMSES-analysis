@@ -1,27 +1,6 @@
 from modules import *
 from read_ramses import move_to_sim_dir, Terminal
 
-X, Y, Z = 0, 1, 2 # cartesian coordinate indices
-S, PH2, Z = 0, 1, 2 # cylindrical coordinate indices
-R, H, PH = 0, 1, 2 # spherical coordinate indices
-CART, CYL, SPH = 0, 1, 2 # coordinate systems
-HYDRO, DM, STAR = 0, 1, 2 # object categories
-DEATH, BIRTH = 0, 1 # star log categories
-epsilon = 1e-30 # small number
-
-sim_name_to_latex = {
-    "alpha_eps0p01": r"$\varepsilon_{\rm SF} = 0.01$", 
-    "alpha_eps0p1": r"$\varepsilon_{\rm SF} = 0.1$", 
-    "alpha_eps1p0": r"$\varepsilon_{\rm SF} = 1.0$", 
-    "alpha_eps0p01_highres": r"$\varepsilon_{\rm SF} = 0.01$ (highres)", 
-    "alpha_eps0p1_highres": r"$\varepsilon_{\rm SF} = 0.1$ (highres)", 
-    "alpha_eps1p0_highres": r"$\varepsilon_{\rm SF} = 1.0$ (highres)",
-    "gas_highres": "Multi-Freefall Model (highres)",
-    "dmo": "Dark Matter Only", 
-    "gas": "Multi-Freefall Model",
-    "alpha_eps0p1_movie": r"$\varepsilon_{\rm SF} = 0.1$ (movie)"
-}
-
 # define custom colormaps
 varying_color = np.array([np.linspace(0, 1, 256)] * 3).T
 const_color = np.array([[0, 0, 0], [1, 0, 0]])
@@ -36,295 +15,6 @@ class Arglist(object):
     ''' Class for lists of function arguments. '''
     def __init__(self, args):
         self.args = np.array(args)
-        
-        
-def git_commit(git_message=None):
-    '''
-    Commit relevant files to git and push changes.
-    
-    Args
-    git_message (str): message for the commit
-    '''
-    with Terminal() as terminal:
-        
-        os.chdir(config.analysis_dir)
-        if git_message == None: git_message = "pushing updates to analysis code"
-        
-        os.system("git add *.py")
-        os.system("git add *.ipynb")
-        os.system("git commit -m '%s'" % git_message)
-        os.system("git push")
-        
-        
-def clear_figures():
-    '''
-    Move all current figures to legacy folder.
-    '''
-    with Terminal() as terminal:
-        os.chdir(config.save_dir)
-        os.system("mv *.png ../legacy/")
-
-
-def save_fig(fig_name, filetype="png", dpi=300, round=None, subdir="all"):
-    '''
-    Save the current matplotlib figure.
-
-    Args
-    name (string): figure name
-    filetype (string): file type
-    dpi (int): dots per inch
-    round (int): round of simulation runs
-    subdir (str): subdirectory
-    '''
-    datetime_string = datetime.now().strftime("%m%d%Y%H%M")
-    filename = "%s-%s.%s" % (fig_name, datetime_string, filetype)
-    if round == None:
-        my_save_dir = os.path.join(config.save_dir, subdir)
-    else: 
-        if not os.path.isdir(os.path.join(config.save_dir, "round%d" % round)): os.mkdir(os.path.join(config.save_dir, "round%d" % round))
-        my_save_dir = os.path.join(config.save_dir, "round%d" % round, subdir)
-    if not os.path.isdir(my_save_dir): os.mkdir(my_save_dir)
-    plt.savefig(os.path.join(my_save_dir, filename), bbox_inches="tight", dpi=dpi)
-    print("Saved figure as '%s'" % filename)
-        
-
-def norm(A):
-    ''' Compute the norm of a vector field. '''
-    return np.sqrt(np.sum(A**2, axis=0))
-
-
-def dot(A, B):
-    ''' Compute the dot product of two vector fields. '''
-    return np.sum(A * B, axis=0)
-
-
-def proj(A, B, do_norm=True):
-    ''' Compute the projection of one vector field onto another. '''
-    if do_norm:
-        return dot(A, B) / norm(B)
-    else:
-        return (dot(A, B) / norm(B)**2)[None, :, :, :] * B
-    
-
-def symlog(x, C=1):
-    ''' Compute the symmetric log '''
-    return np.sign(x) * np.log10(1 + np.abs(x / C))
-
-
-def solve_quadratic(A, B, C):
-    ''' 
-    Solve a quadratic equation. 
-    
-    Note that we choose between forms of the quadratic formula to maximize numerical stability.
-    See https://math.stackexchange.com/questions/866331/numerically-stable-algorithm-for-solving-the-quadratic-equation-when-a-is-very/2007723#2007723
-    '''
-    assert np.shape(A) == np.shape(B), "A and B must have the same shape."
-    assert np.shape(B) == np.shape(C), "B and C must have the same shape."
-    
-    x1, x2 = np.zeros_like(B), np.zeros_like(B)
-    x1[B != 0] = ((-B - np.sign(B) * np.sqrt(B**2 - 4 * A * C)) / (2 * A))[B != 0]
-    x2[B != 0] = C[B != 0] / (A[B != 0] * x1[B != 0])
-    return x1, x2
-
-
-def calc_AH_coords(h, ph):
-    ''' 
-    Compute the Aitoff-Hammer projection coordinates.
-    
-    Args
-    h: polar coordinate
-    ph: azimuthal coordinate
-    
-    Returns
-    AH1, AH2: Aitoff-Hammer projection coordinates
-    '''
-    h_bar = np.pi/2 - h
-    lamb = ph - np.pi
-    
-    AH1 = 2 * np.cos(h_bar) * np.sin(lamb / 2) / np.sqrt(1 + np.cos(h_bar) * np.cos(lamb / 2))
-    AH2 = np.sin(h_bar) / np.sqrt(1 + np.cos(h_bar) * np.cos(lamb / 2))
-    
-    return AH1, AH2
-
-
-def coord_conv(coord, sys1, sys2):
-    '''
-    Convert a coordinate array from one coordinate system to another.
-    See Wikipedia (https://en.wikipedia.org/wiki/Del_in_cylindrical_and_spherical_coordinates) for formulas.
-    
-    Args
-    coord: coordinate array
-    sys1 (int): coordinate system of coord
-    sys2 (int): new coordinate array
-    
-    Returns
-    coord_new: coordinate array in the new coordinate system
-    '''
-    assert sys1 in [CART, CYL, SPH], "Argmument sys1 is not a valid coordinate system."
-    assert sys2 in [CART, CYL, SPH], "Argmument sys2 is not a valid coordinate system."
-    
-    coord_new = np.zeros_like(coord)
-    
-    if sys2 == sys1:
-        
-        coord_new = np.copy(coord)
-    
-    elif sys1 == CART and sys2 == SPH:
-        
-        coord_new[R] = np.sqrt(np.sum(coord**2, axis=0))
-        coord_new[H] = np.arctan2(np.sqrt(coord[X]**2 + coord[Y]**2), coord[Z])
-        coord_new[PH] = np.arctan2(coord[Y], coord[X])
-        
-    elif sys1 == CART and sys2 == CYL:
-        
-        coord_new[S] = np.sqrt(coord[X]**2 + coord[Y]**2),
-        coord_new[PH2] = np.arctan2(coord[Y], coord[X])
-        coord_new[Z] = coord[Z]
-        
-    elif sys1 == SPH and sys2 == CART:
-        
-        coord_new[X] = coord[R] * np.cos(coord[PH]) * np.sin(coord[H])
-        coord_new[Y] = coord[R] * np.sin(coord[PH]) * np.sin(coord[H])
-        coord_new[Z] = coord[R] * np.cos(coord[H])
-        
-    elif sys1 == SPH and sys2 == CYL:
-        
-        coord_new[S] = coord[R] * np.sin(coord[H])
-        coord_new[PH2] = coord[PH]
-        coord_new[Z] = coord[R] * np.cos(coord[H])
-        
-    elif sys1 == CYL and sys2 == CART:
-        
-        coord_new[X] = coord[R] * np.cos(coord[PH2])
-        coord_new[Y] = coord[R] * np.sin(coord[PH2])
-        coord_new[Z] = coord[Z]
-        
-    elif sys1 == CYL and sys2 == SPH:
-        
-        coord_new[R] = np.sqrt(coord[S]**2 + coord[Z]**2)
-        coord_new[H] = np.arctan2(coord[S] / coord[Z])
-        coord_new[PH] = coord[PH2]
-        
-    return coord_new
-
-
-def vec_conv(field, coord, sys1, sys2):
-    '''
-    Convert a vector gield array from one coordinate system to another.
-    See Wikipedia (https://en.wikipedia.org/wiki/Del_in_cylindrical_and_spherical_coordinates) for formulas.
-    
-    Args
-    field: field
-    coord: coordinate array
-    sys1 (int): coordinate system of coord and field
-    sys2 (int): new coordinate array
-    
-    Returns
-    coord_new: coordinate array in the new coordinate system
-    '''    
-    assert sys1 in [CART, CYL, SPH], "Argmument sys1 is not a valid coordinate system."
-    assert sys2 in [CART, CYL, SPH], "Argmument sys2 is not a valid coordinate system."
-    
-    field_new = np.zeros_like(field)
-    
-    if sys1 == sys2:
-        
-        field_new = np.copy(field)
-        
-    elif sys1 == CART and sys2 == SPH:
-    
-        coord_s = np.sqrt(coord[X]**2 + coord[Y]**2)
-        coord_r = np.sqrt(np.sum(coord**2, axis=0))
-        field_new[R] = np.sum(coord * field, axis=0) / coord_r
-        field_new[H] = ((coord[X] * field[X] + coord[Y] * field[Y]) * coord[Z] - coord_s**2 * field[Z]) / (coord_r * coord_s)
-        field_new[PH] = (-coord[Y] * field[X] + coord[X] * field[Y]) / coord_s
-        
-    elif sys1 == CART and sys2 == CYL:
-        
-        coord_s = np.sqrt(coord[X]**2 + coord[Y]**2)
-        field_new[S] = (coord[X] * field[X] + coord[Y] * field[Y]) / coord_s
-        field_new[PH2] = (-coord[Y] * field[X] + coord[X] * field[Y]) / coord_s
-        field_new[Z] = field[Z]
-        
-    elif sys1 == SPH and sys2 == CART:
-        
-        field_new[X] = np.sin(coord[H]) * np.cos(coord[PH]) * field[R] + np.cos(coord[H]) * np.cos(coord[PH]) * field[H] - np.sin(coord[PH]) * field[PH]
-        field_new[Y] = np.sin(coord[H]) * np.sin(coord[PH]) * field[R] + np.cos(coord[H]) * np.sin(coord[PH]) * field[H] - np.cos(coord[PH]) * field[PH]
-        field_new[Z] = np.cos(coord[H]) * field[R] - np.sin(coord[PH]) * field[H]
-        
-    elif sys1 == SPH and sys2 == CYL:
-        
-        field_new[S] = np.sin(coord[H]) * field[R] + np.cos(coord[H]) * field[H]
-        field_new[PH2] = field[PH]
-        field_new[Z] = np.cos(coord[H]) * field[R] - np.sin(coord[H]) * field[H]
-        
-    elif sys1 == CYL and sys2 == CART:
-        
-        field_new[X] = np.cos(field[PH2]) * field[S] - np.sin(coord[PH2]) * field[PH2]
-        field_new[Y] = np.sin(field[PH2]) * field[S] + np.cos(coord[PH2]) * field[PH2]
-        field_new[Z] = field[Z]
-        
-    elif sys1 == CYL and sys2 == SPH:
-        
-        coord_r = np.sqrt(coord[S]**2 + coord[Z]**2)
-        field_new[R] = (coord[S] * field[S] + coord[Z] * field[Z]) / coord_r
-        field_new[H] = (coord[Z] * field[S] - coord[S] * field[Z]) / coord_r
-        field_new[PH] = field[PH2]
-    
-    return field_new
-    
-
-def calc_phase(field1, field2, extrema1, extrema2, do_log1=True, do_log2=True, cond=None, nbins=30, weight=None):
-    '''
-    Compute distribution of a quantity in a two-dimensional phase space.
-
-    Args
-    field1, field2: fields
-    extrema1, extrema2: tuples of max and min field values
-    do_log1, do_log2 (bool): space bins logorithmically
-    cond: conditional array to select a specific region
-    nbins (int): number of bins
-    weight: weight for the bins
-
-    Returns
-    field1_2d, field2_2d: array of field bins
-    weight_2d: array of weight per bin
-    '''
-    if do_log1: 
-        field1 = np.log10(field1)
-        extrema1 = (np.log10(extrema1[0]), np.log10(extrema1[1]))
-
-    if do_log2:
-        field2 = np.log10(field2)
-        extrema2 = (np.log10(extrema2[0]), np.log10(extrema2[1]))
-
-    if np.all(weight) == None: weight = 1.
-    if np.all(cond) == None: cond = 1.
-
-    hist, x_bins, y_bins = np.histogram2d(field1.flatten(), field2.flatten(), weights=(weight * cond).flatten(), bins=(nbins, nbins), range=[extrema1, extrema2])
-
-    if do_log1:
-        field1_2d = 10**(x_bins[:-1] + np.diff(x_bins)[0])
-    else:
-        field1_2d = x_bins[:-1] + np.diff(x_bins)[0]
-
-    if do_log2:
-        field2_2d = 10**(y_bins[:-1] + np.diff(y_bins)[0])
-    else:
-        field2_2d = y_bins[:-1] + np.diff(y_bins)[0]
-
-    weight_2d = hist.T
-
-    return field1_2d, field2_2d, weight_2d
-
-
-cubic = lambda x, a, b, c, d: a + b*x + c*x**2 + d*x**3
-def get_biggest_halo_coord_cubic(a_exp):
-    '''
-    Estimate the coordinates of the biggest halo using a cubic fit to each coordinate.
-    '''
-    biggest_halo_coord = np.array([cubic(a_exp, *config.halo_poptx), cubic(a_exp, *config.halo_popty), cubic(a_exp, *config.halo_poptz)])
-    return biggest_halo_coord
 
 class Sim(object):
     '''
@@ -439,7 +129,7 @@ class Sim(object):
         self.sim_name = sim_name
         self.sim_latex = sim_name_to_latex[self.sim_name]
         self.sim_dir = move_to_sim_dir(self.sim_round, self.sim_name)
-        self.save_dir = os.path.join(config.save_dir, "round%d" % self.sim_round, self.sim_name)
+        self.save_dir = os.path.join(save_dir, "round%d" % self.sim_round, self.sim_name)
         
         self.epsilon_SF = epsilon_SF
         self.alpha_vir_crit = 10.
@@ -480,17 +170,6 @@ class Sim(object):
         self.cond_star = np.ones_like(self.mass_star, dtype=bool)
 
         self.create_sph_grid()
-    
-    def save_fig(self, fig_name, filetype="png", dpi=300):
-        '''
-        Save the current matplotlib figure.
-
-        Args
-        name (string): figure name
-        filetype (string): file type
-        dpi (int): dots per inch
-        '''
-        save_fig(fig_name, filetype=filetype, dpi=dpi, round=self.sim_round, subdir=self.sim_name)
         
     def create_sph_grid(self):
         '''
@@ -507,26 +186,16 @@ class Sim(object):
         self.dA_hph = self.coord_sph[R]**2 * np.sin(self.coord_sph[H]) * self.dx_sph[H] * self.dx_sph[PH]
     
     def a_exp_to_proper_time(self, a):
-        ''' Convert expansion factor to proper time.'''
-        integrand = lambda a: (self.Omega_m0 * a**(-1) + self.Omega_k0 + self.Omega_L0 * a**2)**(-1/2)
-        t = quad(integrand, 0, a)[0] / self.H0
-        return t
+        return a_exp_to_proper_time(a, self.Omega_m0, self.Omega_k0, self.Omega_L0, self.H0)
 
     def a_exp_to_conformal_time(self, a):
-        ''' Convert expansion factor to conformal time.'''
-        integrand = lambda a: (self.Omega_m0 * a + self.Omega_k0 * a**2 + self.Omega_L0 * a**4)**(-1/2)
-        tau = const.c * quad(integrand, 0, a)[0] / self.H0
-        return tau
+        return a_exp_to_conformal_time(a, self.Omega_m0, self.Omega_k0, self.Omega_L0, self.H0)
 
     def proper_time_to_a_exp(self, t):
-        ''' Convert proper time to expansion rate.'''
-        a = fsolve(lambda a: (self.a_exp_to_proper_time(a) - t) * self.H0, self.a_exp)
-        return a
+        return proper_time_to_a_exp(t, self.Omega_m0, self.Omega_k0, self.Omega_L0, self.H0)
 
     def conformal_time_to_a_exp(self, tau):
-        ''' Convert conformal time to expansion rate.'''
-        a = fsolve(lambda a: (self.a_exp_to_conformal_time(a) - tau) * self.H0, self.a_exp)
-        return a
+        return conformal_time_to_a_exp(tau, self.Omega_m0, self.Omega_k0, self.Omega_L0, self.H0)
 
     def interp_to_sph(self, field):
         ''' Interpolate a field to a spherical grid '''
@@ -564,7 +233,7 @@ class Sim(object):
         plot_type (str): plot type ['slice', 'rgb_slice', 'AH']
         do_axis_labels (bool): use axis labels
         '''
-        kwargs = dict(config.defaults, **kwargs)
+        kwargs = dict(defaults, **kwargs)
         kwargs_obj = SimpleNamespace(**kwargs)
         
         _, axs = plt.subplots(figsize=figsize, nrows=nrows, ncols=ncols, sharex=sharex, sharey=sharey, squeeze=False)
@@ -610,7 +279,7 @@ class Sim(object):
         Returns
         ax
         '''
-        kwargs = dict(config.defaults, **kwargs)
+        kwargs = dict(defaults, **kwargs)
         
         plt.figure(figsize=figsize)
         ax = plt.gca()
@@ -1085,7 +754,7 @@ class Sim(object):
     @cached_property
     def vel_turb(self):
         ''' Turbulent velocity '''
-        return np.sqrt(2 * self.energy_turb)
+        return np.sqrt(2/3 * self.energy_turb)
     
     @cached_property
     def temp(self):
@@ -1115,12 +784,12 @@ class Sim(object):
     @cached_property
     def mach_turb(self):
         ''' Turbulent mach number '''
-        return self.vel_turb / self.c_s / np.sqrt(3)
+        return self.vel_turb / self.c_s
     
     @cached_property
     def alpha_vir(self):
         ''' Virial parameter '''
-        return 15 / np.pi * self.c_s**2 * (1 + self.mach_turb**2) / (const.G * self.density * self.dA)
+        return 15 / np.pi * self.c_s**2 * (1 + self.mach_turb**2) / (const.G * self.density * self.dx_local**2)
     
     @cached_property
     def ion_frac(self):
@@ -1141,20 +810,10 @@ class Sim(object):
     
     @cached_property
     def SFR_density(self):
-        '''
-        Star formation rate density.
-
-        For the multi-fallback model (epsilon_SF = None), see Federrath&Klessen2012 (https://arxiv.org/pdf/1209.2856.pdf) and Kretschmer&Teyssier2021 (https://arxiv.org/pdf/1906.11836.pdf) for details.
-        The turbulence forcing parameter b varies smoothly between b ~ 1/3 for purely solenoidal (divergence-free) forcing 
-        and b ~ 1 for purely compressive (curl-free) forcing of the turbulence.
-        A stochastic mixture of forcing modes in 3-d space leads to b ~ 0.4.
-        '''
+        ''' Star formation rate density. '''
         t_ff = np.sqrt(3 * np.pi / (32 * const.G * self.density)) # free-fall time
         if self.epsilon_SF == None:
-            b_turb = 1.0 # turbulence forcing parameter
-            s_crit = np.log(self.alpha_vir * (1 + (2 * self.mach_turb**4) / (1 + self.mach_turb**2))) # lognormal critical density for star formation
-            sigma_s = np.sqrt(np.log(1 + b_turb**2 * self.mach_turb**2)) # standard deviation of the lognormal subgrid density distribution
-            self.epsilon_SF = 1/2 * np.exp(3/8 * sigma_s**2) * (1 + erf((sigma_s**2 - s_crit) / np.sqrt(2 * sigma_s**2))) # star formation efficiency
+            self.epsilon_SF = calc_epsilon_SF(self.alpha_vir, self.mach_turb, b_turb=1.0)
             SFR_density = self.epsilon_SF * self.density / t_ff 
         else:
             SFR_density = self.epsilon_SF * self.density / t_ff

@@ -1,0 +1,86 @@
+from modules import *
+
+import yt
+from yt.units import dimensions
+from yt.visualization.fixed_resolution import FixedResolutionBuffer
+
+# add fields to yt
+
+def _vorticity_magnitude(field, data):
+    vorticity_x = data["gas", "velocity_z_gradient_y"] - data["gas", "velocity_y_gradient_z"]
+    vorticity_y = data["gas", "velocity_x_gradient_z"] - data["gas", "velocity_z_gradient_x"]
+    vorticity_z = data["gas", "velocity_y_gradient_x"] - data["gas", "velocity_x_gradient_y"]
+    return np.sqrt(vorticity_x**2 + vorticity_y**2 + vorticity_z**2)
+
+def _velocity_divergence_new(field, data):
+    return data["gas", "velocity_x_gradient_x"] + data["gas", "velocity_y_gradient_y"] + data["gas", "velocity_z_gradient_z"]
+
+def _bturb(field, data):
+    return (1./3. + 2./3. * (data["gas", "velocity_divergence_new"]**2 / (data["gas", "vorticity_magnitude"]**2 + data["gas", "velocity_divergence_new"]**2))**3)
+
+fields_to_add = {
+    "vorticity_magnitude": {"function": _vorticity_magnitude, "units": "1/s"},
+    "velocity_divergence_new": {"function": _velocity_divergence_new, "units": "1/s"},
+    "bturb": {"function": _bturb, "units": ""}
+}
+
+class SimYT(object):
+    
+    def __init__(self, sim_round, sim_name, dump, biggest_halo_coord):
+
+        self.sim_round = sim_round
+        self.sim_name = sim_name
+        self.sim_latex = sim_name_to_latex[self.sim_name]
+        self.sim_dir = move_to_sim_dir(self.sim_round, self.sim_name)
+        self.save_dir = os.path.join(save_dir, "round%d" % self.sim_round, self.sim_name)
+        self.dump = dump
+        info = get_info(self.dump)
+        for var_name in info.__dict__:
+            setattr(self, var_name, info.__dict__[var_name])
+        self.biggest_halo_coord = biggest_halo_coord
+        self.biggest_halo_coord_code = self.biggest_halo_coord / self.length_unit
+        self.box_size = None
+        self.frb = None
+        self.num = None
+
+        info_file = os.path.join("output_%.5d" % dump, "info_%.5d.txt" % dump)
+        self.ds = yt.load(info_file)
+        self.ds.add_gradient_fields(("gas", "velocity_x"))
+        self.ds.add_gradient_fields(("gas", "velocity_y"))
+        self.ds.add_gradient_fields(("gas", "velocity_z"))
+        for field_name, field_data in fields_to_add.items():
+            self._add_field(field_name, field_data["function"], field_data["units"])
+    
+    def _add_field(self, name, func, units):
+
+        self.ds.add_field(
+            name=("gas", name),
+            function=func,
+            sampling_type="local",
+            units=units,
+            force_override=True
+        )
+    
+    def _frb(self, box_size, num=500):
+
+        left_edge_code = (self.biggest_halo_coord - box_size / 2) / self.length_unit
+        right_edge_code = (self.biggest_halo_coord + box_size / 2) / self.length_unit
+        sl = self.ds.slice(Z, self.biggest_halo_coord_code[Z])
+        bounds = (left_edge_code[X], right_edge_code[X], left_edge_code[Y], right_edge_code[Y])
+        self.frb = FixedResolutionBuffer(sl, bounds, (num, num))
+        self.box_size = box_size
+        self.num = num
+    
+    def slice(self, field_name, box_size, cmap='jet', label=None, do_log=False, num=500):
+
+        if (box_size != self.box_size) or (num != self.num):
+            self._frb(box_size, num=num)
+        field = self.frb[field_name].T
+        if do_log: field = np.log10(field)
+        plt.imshow(field, cmap=cmap, extent=[-box_size/2/const.kpc, box_size/2/const.kpc, -box_size/2/const.kpc, box_size/2/const.kpc])
+        plt.xlabel(r'$x$ [kpc]')
+        plt.ylabel(r'$y$ [kpc]')
+        cbar = plt.colorbar()
+        if label != None: cbar.set_label(label)
+        plt.title(r'$a = %.3g$' % self.a_exp)
+

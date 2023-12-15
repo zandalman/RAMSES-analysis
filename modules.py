@@ -19,7 +19,7 @@ from scipy.integrate import quad, quad_vec, trapz, cumtrapz
 from scipy.optimize import fsolve
 from scipy.ndimage import gaussian_filter
 from scipy.special import erf
-from scipy.interpolate import griddata, interpn, RegularGridInterpolator
+from scipy.interpolate import griddata, interpn, RegularGridInterpolator, interp1d
 from scipy.signal import welch
 from scipy.optimize import curve_fit
 from scipy.io import FortranFile
@@ -27,4 +27,5 @@ from scipy.io import FortranFile
 from functools import cached_property
 
 import const
-import config
+from config import *
+from functions import *
