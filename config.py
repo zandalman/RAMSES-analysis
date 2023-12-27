@@ -3,7 +3,7 @@ S, PH2, Z = 0, 1, 2 # cylindrical coordinate indices
 R, H, PH = 0, 1, 2 # spherical coordinate indices
 CART, CYL, SPH = 0, 1, 2 # coordinate systems
 HYDRO, DM, STAR = 0, 1, 2 # object categories
-DEATH, BIRTH = 0, 1 # star log categories
+BIRTH, DEATH = 0, 1 # star log categories
 epsilon = 1e-30 # small number
 
 analysis_dir = "/home/za9132/analysis"
@@ -33,7 +33,8 @@ sim_name_to_latex = {
     "bturb0p3": r"$b_{\rm turb} = 0.3$",
     "bturb1p0": r"$b_{\rm turb} = 1.0$",
     "temploc": "Local sound speed",
-    "tempfixedcut": "Fixed sound speed with cutoff"
+    "tempfixedcut": "Fixed sound speed with cutoff",
+    "bturbfunc_jeans": r"Variable $b_{\rm turb}$ with Jeans refine"
 }
 
 defaults = {

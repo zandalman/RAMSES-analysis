@@ -6,11 +6,17 @@ from yt.visualization.fixed_resolution import FixedResolutionBuffer
 
 # add fields to yt
 
+def _vorticity_x_new(field, data):
+    return data["gas", "velocity_z_gradient_y"] - data["gas", "velocity_y_gradient_z"]
+
+def _vorticity_y_new(field, data):
+    return data["gas", "velocity_x_gradient_z"] - data["gas", "velocity_z_gradient_x"]
+
+def _vorticity_z_new(field, data):
+    return data["gas", "velocity_y_gradient_x"] - data["gas", "velocity_x_gradient_y"]
+
 def _vorticity_magnitude(field, data):
-    vorticity_x = data["gas", "velocity_z_gradient_y"] - data["gas", "velocity_y_gradient_z"]
-    vorticity_y = data["gas", "velocity_x_gradient_z"] - data["gas", "velocity_z_gradient_x"]
-    vorticity_z = data["gas", "velocity_y_gradient_x"] - data["gas", "velocity_x_gradient_y"]
-    return np.sqrt(vorticity_x**2 + vorticity_y**2 + vorticity_z**2)
+    return np.sqrt(data["gas", "vorticity_x_new"]**2 + data["gas", "vorticity_y_new"]**2 + data["gas", "vorticity_z_new"]**2)
 
 def _velocity_divergence_new(field, data):
     return data["gas", "velocity_x_gradient_x"] + data["gas", "velocity_y_gradient_y"] + data["gas", "velocity_z_gradient_z"]
@@ -19,6 +25,9 @@ def _bturb(field, data):
     return (1./3. + 2./3. * (data["gas", "velocity_divergence_new"]**2 / (data["gas", "vorticity_magnitude"]**2 + data["gas", "velocity_divergence_new"]**2))**3)
 
 fields_to_add = {
+    "vorticity_x_new": {"function": _vorticity_x_new, "units": "1/s"},
+    "vorticity_y_new": {"function": _vorticity_y_new, "units": "1/s"},
+    "vorticity_z_new": {"function": _vorticity_z_new, "units": "1/s"},
     "vorticity_magnitude": {"function": _vorticity_magnitude, "units": "1/s"},
     "velocity_divergence_new": {"function": _velocity_divergence_new, "units": "1/s"},
     "bturb": {"function": _bturb, "units": ""}
@@ -50,6 +59,7 @@ class SimYT(object):
         self.ds.add_gradient_fields(("gas", "velocity_z"))
         for field_name, field_data in fields_to_add.items():
             self._add_field(field_name, field_data["function"], field_data["units"])
+        self.ad = self.ds.all_data()
     
     def _add_field(self, name, func, units):
 
