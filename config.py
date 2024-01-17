@@ -32,6 +32,10 @@ sim_name_to_latex = {
     "bturbfunc": r"Variable $b_{\rm turb}$",
     "bturb0p3": r"$b_{\rm turb} = 0.3$",
     "bturb1p0": r"$b_{\rm turb} = 1.0$",
+    "bturbfunc_highres": r"Variable $b_{\rm turb}$ (highres)",
+    "bturb0p3_highres": r"$b_{\rm turb} = 0.3$ (highres)",
+    "bturb1p0_highres": r"$b_{\rm turb} = 1.0$ (highres)",
+    "fastfeedback": r"$b_{\rm turb} = 1.0$, $t_{\rm fb} = 0.5~{\rm Myr}$",
     "temploc": "Local sound speed",
     "tempfixedcut": "Fixed sound speed with cutoff",
     "bturbfunc_jeans": r"Variable $b_{\rm turb}$ with Jeans refine"
