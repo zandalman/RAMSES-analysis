@@ -23,6 +23,7 @@ from scipy.interpolate import griddata, interpn, RegularGridInterpolator, interp
 from scipy.signal import welch
 from scipy.optimize import curve_fit
 from scipy.io import FortranFile
+from scipy.signal import welch
 
 from functools import cached_property
 
