@@ -38,7 +38,9 @@ sim_name_to_latex = {
     "fastfeedback": r"$b_{\rm turb} = 1.0$, $t_{\rm fb} = 0.5~{\rm Myr}$",
     "temploc": "Local sound speed",
     "tempfixedcut": "Fixed sound speed with cutoff",
-    "bturbfunc_jeans": r"Variable $b_{\rm turb}$ with Jeans refine"
+    "bturbfunc_jeans": r"Variable $b_{\rm turb}$ with Jeans refine",
+    "mstar0p2": r"$m_* = 0.2$",
+    "mstar5p0": r"$m_* = 5.0$"
 }
 
 defaults = {

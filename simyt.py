@@ -35,7 +35,7 @@ fields_to_add = {
 
 class SimYT(object):
     
-    def __init__(self, sim_round, sim_name, dump, biggest_halo_coord):
+    def __init__(self, sim_round, sim_name, dump, coord_center):
 
         self.sim_round = sim_round
         self.sim_name = sim_name
@@ -46,11 +46,12 @@ class SimYT(object):
         info = get_info(self.dump)
         for var_name in info.__dict__:
             setattr(self, var_name, info.__dict__[var_name])
-        self.biggest_halo_coord = biggest_halo_coord
-        self.biggest_halo_coord_code = self.biggest_halo_coord / self.length_unit
-        self.box_size = None
+        self.coord_center = coord_center
+        self.coord_center_code = self.coord_center / self.length_unit
         self.frb = None
+        self.box_size = None
         self.num = None
+        self.idx_slice = None
 
         info_file = os.path.join("output_%.5d" % dump, "info_%.5d.txt" % dump)
         self.ds = yt.load(info_file)
@@ -71,26 +72,32 @@ class SimYT(object):
             force_override=True
         )
     
-    def _frb(self, box_size, num=500):
+    def _frb(self, box_size, idx_slice=Z, num=512):
 
-        left_edge_code = (self.biggest_halo_coord - box_size / 2) / self.length_unit
-        right_edge_code = (self.biggest_halo_coord + box_size / 2) / self.length_unit
-        sl = self.ds.slice(Z, self.biggest_halo_coord_code[Z])
-        bounds = (left_edge_code[X], right_edge_code[X], left_edge_code[Y], right_edge_code[Y])
+        idx_coord1, idx_coord2 = np.sort([(idx_slice + 1) % 3, (idx_slice + 2) % 3])
+        left_edge_code = (self.coord_center - box_size / 2) / self.length_unit
+        right_edge_code = (self.coord_center + box_size / 2) / self.length_unit
+        sl = self.ds.slice(idx_slice, self.coord_center_code[idx_slice])
+        bounds = (left_edge_code[idx_coord1], right_edge_code[idx_coord1], left_edge_code[idx_coord2], right_edge_code[idx_coord2])
         self.frb = FixedResolutionBuffer(sl, bounds, (num, num))
-        self.box_size = box_size
-        self.num = num
+        self.box_size, self.num, self.idx_slice = box_size, num, idx_slice
     
-    def slice(self, field_name, box_size, cmap='jet', label=None, do_log=False, num=500):
+    def plot_slice(self, field_name, box_size, ax=None, idx_slice=Z, vmin=None, vmax=None, cmap='jet', label=None, do_log=False, num=512):
 
-        if (box_size != self.box_size) or (num != self.num):
-            self._frb(box_size, num=num)
+        if ax == None: ax = plt.gca()
+        if (box_size != self.box_size) or (num != self.num) or (idx_slice != self.idx_slice):
+            self._frb(box_size, idx_slice=idx_slice, num=num)
         field = self.frb[field_name].T
-        if do_log: field = np.log10(field)
-        plt.imshow(field, cmap=cmap, extent=[-box_size/2/const.kpc, box_size/2/const.kpc, -box_size/2/const.kpc, box_size/2/const.kpc])
-        plt.xlabel(r'$x$ [kpc]')
-        plt.ylabel(r'$y$ [kpc]')
-        cbar = plt.colorbar()
+        if do_log: 
+            field = np.log10(field)
+            if vmin: vmin = np.log10(vmin)
+            if vmax: vmax = np.log10(vmax)
+        im = ax.imshow(field, cmap=cmap, extent=[-box_size/2/const.kpc, box_size/2/const.kpc, -box_size/2/const.kpc, box_size/2/const.kpc], origin='lower', vmin=vmin, vmax=vmax)
+        label_coord_list = [r"$x$ [kpc]", r"$y$ [kpc]", r"$z$ [kpc]"]
+        idx_coord1, idx_coord2 = np.sort([(idx_slice + 1) % 3, (idx_slice + 2) % 3])
+        ax.set_xlabel(label_coord_list[idx_coord1])
+        ax.set_ylabel(label_coord_list[idx_coord2])
+        cbar = plt.colorbar(im, ax=ax)
         if label != None: cbar.set_label(label)
-        plt.title(r'$a = %.3g$' % self.a_exp)
+        ax.set_title(r'$a = %.3g$' % self.a_exp)
 

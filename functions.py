@@ -306,7 +306,44 @@ def vec_conv(field, coord, sys1, sys2):
         field_new[PH] = field[PH2]
     return field_new
 
-def calc_phase(field1, field2, extrema1, extrema2, do_log1=True, do_log2=True, cond=None, nbins=30, weight=None):
+def calc_1d_profile(x, y, extrema=None, do_log_x=True, nbins=100, weight=None, cond=None, do_cum=False):
+    '''
+    Compute radial profile of field averaged over spherical shells.
+
+    Args
+    x, y: quantities with which to 
+    extrema: tuple of max and min field values
+    do_log_x (bool): space bins logorithmically
+    nbins (int): number of bins
+    weight: weight array
+    cond: conditional array to select a specific region
+    do_cum (bool): cumulative 1d profile
+
+    Returns
+    r_1d: array of radial bins
+    field_1d: array of spherically averaged field values
+    '''
+    if do_log_x:
+        x = np.log10(x)
+        extrema = (np.log10(extrema[0]), np.log10(extrema[1]))
+    
+    if np.all(cond) == None: cond = 1.
+    if np.all(weight) == None: weight = 1.
+
+    counts1, bins = np.histogram(x.flatten(), weights=(y * weight * cond).flatten(), bins=nbins, range=extrema)
+    counts2, bins = np.histogram(x.flatten(), weights=(np.ones_like(y) * weight * cond).flatten(), bins=nbins, range=extrema)
+
+    x_1d = bins[:-1] + np.diff(bins)[0]
+    if do_cum:
+        y_1d = np.cumsum(counts1) / np.cumsum(counts2)
+    else:
+        y_1d = counts1 / counts2
+
+    if do_log_x: x_1d = 10**x_1d
+
+    return x_1d, y_1d
+
+def calc_phase(field1, field2, extrema1, extrema2, do_log1=True, do_log2=True, nbins=30, cond=None, weight=None):
     '''
     Compute distribution of a quantity in a two-dimensional phase space.
 
@@ -314,8 +351,8 @@ def calc_phase(field1, field2, extrema1, extrema2, do_log1=True, do_log2=True, c
     field1, field2: fields
     extrema1, extrema2: tuples of max and min field values
     do_log1, do_log2 (bool): space bins logorithmically
-    cond: conditional array to select a specific region
     nbins (int): number of bins
+    cond: conditional array to select a specific region
     weight: weight for the bins
 
     Returns
