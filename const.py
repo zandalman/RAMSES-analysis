@@ -1,6 +1,4 @@
-'''
-Units and physical constants.
-'''
+''' Units and physical constants. '''
 import numpy as np
 
 # units

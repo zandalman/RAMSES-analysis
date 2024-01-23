@@ -1,10 +1,13 @@
-from modules import *
-
+import os
+import numpy as np
+import matplotlib.pyplot as plt
+from functools import cached_property
+import const
+from config import *
+from functions import *
 import yt
 from yt.units import dimensions
 from yt.visualization.fixed_resolution import FixedResolutionBuffer
-
-# add fields to yt
 
 def _vorticity_x_new(field, data):
     return data["gas", "velocity_z_gradient_y"] - data["gas", "velocity_y_gradient_z"]

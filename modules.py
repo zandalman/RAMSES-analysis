@@ -1,6 +1,4 @@
-'''
-Modules used by all files.
-'''
+''' Modules used by all files. '''
 
 import os, subprocess, warnings
 from datetime import datetime

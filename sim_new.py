@@ -1,4 +1,11 @@
-from modules import *
+import os
+import numpy as np
+import matplotlib.pyplot as plt
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+from functools import cached_property
+import const
+from config import *
+from functions import *
 
 class Sim(object):
     '''
@@ -14,10 +21,10 @@ class Sim(object):
 
     halo_idx (int): index of the halo
     halo_mass (float): mass of the halo
-    a_exp (float): expansion factor
+    aexp (float): expansion factor
     redshift (float): redshift
     time_now (float): proper time
-    universe_age (float): age of the Universe (i.e. proper time at a_exp = 1)
+    universe_age (float): age of the Universe (i.e. proper time at aexp = 1)
     
     H0 (float): Hubble constant at z=0
     Omega_m0 (float): mass density parameter at z=0
@@ -116,26 +123,26 @@ class Sim(object):
         self.dA = self.dx**2
         self.dV = self.dx**3
             
-        self.redshift = 1 / self.a_exp - 1
-        self.H = self.H0 * np.sqrt(self.Omega_m0 / self.a_exp**3 + self.Omega_k0 / self.a_exp**2 + self.Omega_L0)
+        self.redshift = 1 / self.aexp - 1
+        self.H = self.H0 * np.sqrt(self.Omega_m0 / self.aexp**3 + self.Omega_k0 / self.aexp**2 + self.Omega_L0)
         self.rho_crit = 3 * self.H**2 / (8 * np.pi * const.G)
-        self.time_now = self.a_exp_to_proper_time(self.a_exp)
-        self.universe_age = self.a_exp_to_proper_time(1.)
+        self.time_now = self.aexp_to_proper_time(self.aexp)
+        self.universe_age = self.aexp_to_proper_time(1.)
         
         self.time_starbirth = self.tau_starbirth / self.H0 + self.universe_age
         self.age_star = self.time_now - self.time_starbirth
 
-    def a_exp_to_proper_time(self, a):
-        return a_exp_to_proper_time(a, self.Omega_m0, self.Omega_k0, self.Omega_L0, self.H0)
+    def aexp_to_proper_time(self, a):
+        return aexp_to_proper_time(a, self.Omega_m0, self.Omega_k0, self.Omega_L0, self.H0)
 
-    def a_exp_to_conformal_time(self, a):
-        return a_exp_to_conformal_time(a, self.Omega_m0, self.Omega_k0, self.Omega_L0, self.H0)
+    def aexp_to_conformal_time(self, a):
+        return aexp_to_conformal_time(a, self.Omega_m0, self.Omega_k0, self.Omega_L0, self.H0)
 
-    def proper_time_to_a_exp(self, t):
-        return proper_time_to_a_exp(t, self.Omega_m0, self.Omega_k0, self.Omega_L0, self.H0)
+    def proper_time_to_aexp(self, t):
+        return proper_time_to_aexp(t, self.Omega_m0, self.Omega_k0, self.Omega_L0, self.H0)
 
-    def conformal_time_to_a_exp(self, tau):
-        return conformal_time_to_a_exp(tau, self.Omega_m0, self.Omega_k0, self.Omega_L0, self.H0)
+    def conformal_time_to_aexp(self, tau):
+        return conformal_time_to_aexp(tau, self.Omega_m0, self.Omega_k0, self.Omega_L0, self.H0)
 
     def get_field_input(self, field):
         ''' Return a field given an input, which can either be a field or a string. '''

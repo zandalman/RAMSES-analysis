@@ -1,5 +1,15 @@
-from modules import *
+import os, subprocess
+from datetime import datetime
+from types import SimpleNamespace
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.integrate import quad
+from scipy.optimize import fsolve
+from scipy.special import erf
+import const
+from config import *
 
+# simple functions for curve fitting
 linear = lambda x, a: a*x
 affine = lambda x, a, b: a + b*x
 quadratic = lambda x, a, b, c: a + b*x + c*x**2
@@ -70,8 +80,7 @@ def plot_pdf(field, extrema, ax=None, weights=None, nbins=200, do_log=True, labe
 
 def get_stdout(cmd):
     ''' Return the standard output of a command line directive '''
-    stdout = subprocess.check_output(cmd, shell=True).decode()
-    return stdout
+    return subprocess.check_output(cmd, shell=True).decode()
 
 def clear_figures():
     ''' Move all current figures to legacy folder. '''
@@ -143,26 +152,26 @@ def calc_eps_sf(density, energy_turb, temp, dx, b_turb=1.0, gamma=5/3):
     eps_sf = 1/2 * np.exp(3/8 * sigma_s**2) * (1 + erf((sigma_s**2 - s_crit) / np.sqrt(2 * sigma_s**2))) # star formation efficiency
     return eps_sf
 
-def a_exp_to_proper_time(a, Omega_m0=const.Omega_m0, Omega_k0=const.Omega_k0, Omega_L0=const.Omega_L0, H0=const.H0):
+def aexp_to_proper_time(a, Omega_m0=const.Omega_m0, Omega_k0=const.Omega_k0, Omega_L0=const.Omega_L0, H0=const.H0):
     ''' Convert expansion factor to proper time.'''
     integrand = lambda a: (Omega_m0 * a**(-1) + Omega_k0 + Omega_L0 * a**2)**(-1/2)
     t = quad(integrand, 0, a)[0] / H0
     return t
 
-def a_exp_to_conformal_time(a, Omega_m0=const.Omega_m0, Omega_k0=const.Omega_k0, Omega_L0=const.Omega_L0, H0=const.H0):
+def aexp_to_conformal_time(a, Omega_m0=const.Omega_m0, Omega_k0=const.Omega_k0, Omega_L0=const.Omega_L0, H0=const.H0):
     ''' Convert expansion factor to conformal time.'''
     integrand = lambda a: (Omega_m0 * a + Omega_k0 * a**2 + Omega_L0 * a**4)**(-1/2)
     tau = const.c * quad(integrand, 0, a)[0] / H0
     return tau
 
-def proper_time_to_a_exp(t, Omega_m0=const.Omega_m0, Omega_k0=const.Omega_k0, Omega_L0=const.Omega_L0, H0=const.H0):
+def proper_time_to_aexp(t, Omega_m0=const.Omega_m0, Omega_k0=const.Omega_k0, Omega_L0=const.Omega_L0, H0=const.H0):
     ''' Convert proper time to expansion rate.'''
-    a = fsolve(lambda a: (a_exp_to_proper_time(a, Omega_m0, Omega_k0, Omega_L0, H0) - t) * H0, 0.1)
+    a = fsolve(lambda a: (aexp_to_proper_time(a, Omega_m0, Omega_k0, Omega_L0, H0) - t) * H0, 0.1)
     return a
 
-def conformal_time_to_a_exp(tau, Omega_m0=const.Omega_m0, Omega_k0=const.Omega_k0, Omega_L0=const.Omega_L0, H0=const.H0):
+def conformal_time_to_aexp(tau, Omega_m0=const.Omega_m0, Omega_k0=const.Omega_k0, Omega_L0=const.Omega_L0, H0=const.H0):
     ''' Convert conformal time to expansion rate.'''
-    a = fsolve(lambda a: (a_exp_to_conformal_time(a, Omega_m0, Omega_k0, Omega_L0, H0) - tau) * H0, 0.1)
+    a = fsolve(lambda a: (aexp_to_conformal_time(a, Omega_m0, Omega_k0, Omega_L0, H0) - tau) * H0, 0.1)
     return a
 
 def symlog(x, C=1):
@@ -363,22 +372,22 @@ def calc_phase(field1, field2, extrema1, extrema2, do_log1=True, do_log2=True, n
     weight_2d = hist.T
     return field1_2d, field2_2d, weight_2d
 
-def get_biggest_halo_coord_cubic(a_exp):
+def get_biggest_halo_coord_cubic(aexp):
     '''
     Estimate the coordinates of the biggest halo using a cubic fit to each coordinate.
     '''
-    biggest_halo_coord = np.array([cubic(a_exp, *halo_poptx), cubic(a_exp, *halo_popty), cubic(a_exp, *halo_poptz)])
+    biggest_halo_coord = np.array([cubic(aexp, *halo_poptx), cubic(aexp, *halo_popty), cubic(aexp, *halo_poptz)])
     return biggest_halo_coord
 
-def get_dump(a_exp):
+def get_dump(aexp):
     ''' Get the dump number for a given expansion factor. '''
-    list_of_dump = get_list_of_dump()
-    list_of_a_exp = np.array([get_info(dump).a_exp for dump in list_of_dump])
-    dump_idx = np.argmin(np.abs(list_of_a_exp - a_exp))
-    dump = list_of_dump[dump_idx]
+    dump_list = get_dump_list()
+    aexp_list = np.array([get_info(dump).aexp for dump in dump_list])
+    dump_idx = np.argmin(np.abs(aexp_list - aexp))
+    dump = dump_list[dump_idx]
     return dump
     
-def get_list_of_dump():
+def get_dump_list():
     ''' Get array of dump numbers. '''
     num_dump = []
     for filename in sorted(os.listdir()):
@@ -397,11 +406,11 @@ def get_info(dump):
     Returns
     info: info SimpleNamespace
         ncpu (int): number of cpus
-        amr_level_couarse (int): number of coarse AMR levels
+        amr_level_coarse (int): number of coarse AMR levels
         amr_level_sim_max (int): maximum AMR level at any expansion factor
         amr_level_reduce_exp (int): number of AMR levels locked by expansion factor
         amr_level_max (int): maximum AMR level at current expansion factor
-        a_exp (float): expansion factor
+        aexp (float): expansion factor
         H0 (float): Hubble constant at z=0
         Omega_m0 (float): mass density parameter at z=0
         Omega_L0 (float): dark energy density parameter at z=0
@@ -422,7 +431,7 @@ def get_info(dump):
             if i == 0: info['ncpu'] = int(line.split()[2])
             if i == 2: info['amr_level_coarse'] = int(line.split()[2])
             if i == 3: info['amr_level_sim_max'] = int(line.split()[2])
-            if i == 9: info['a_exp'] = float(line.split()[2])
+            if i == 9: info['aexp'] = float(line.split()[2])
             if i == 10: info['H0'] = float(line.split()[2])
             if i == 11: info['Omega_m0'] = float(line.split()[2])
             if i == 12: info['Omega_L0'] = float(line.split()[2])
@@ -436,7 +445,7 @@ def get_info(dump):
     info.vel_unit = info.length_unit / info.time_unit
     info.energy_unit = info.mass_unit * info.vel_unit**2
     info.energy_density_unit = info.density_unit * info.vel_unit**2
-    info.amr_level_reduce_exp = -min(-4, int(np.floor(np.log2(info.a_exp))))
+    info.amr_level_reduce_exp = -min(-4, int(np.floor(np.log2(info.aexp))))
     info.amr_level_max = info.amr_level_sim_max - info.amr_level_coarse - info.amr_level_reduce_exp
     info.H0 *= const.km / const.Mpc
     return info

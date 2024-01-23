@@ -1,4 +1,12 @@
-from modules import *
+import os
+from types import SimpleNamespace
+import numpy as np
+from astropy.io import ascii
+from scipy.integrate import quad
+from scipy.io import FortranFile
+import const
+from config import *
+from functions import *
 
 def get_halo_cat(dump, cgs=False):
     ''' 
@@ -82,15 +90,15 @@ def get_clump_cat(dump, cgs=False):
         clump_cat.mass *= info.mass_unit
     return clump_cat
 
-def get_star_cat(cgs=False, log=False, a_exp_max=1.0, list_of_dump=None):
+def get_star_cat(cgs=False, log=False, aexp_max=1.0, dump_list=None):
     ''' 
     Get clump catalog. 
     
     Args
     cgs (bool): use cgs units
     log (bool): log progress
-    a_exp_max (float): maximum expansion factor
-    list_of_dump: list of dumps to read
+    aexp_max (float): maximum expansion factor
+    dump_list: list of dumps to read
         
     Returns
     starbirth_cat, stardeath_cat: star catalog SimpleNamespace for star formation and supernovae events
@@ -103,16 +111,14 @@ def get_star_cat(cgs=False, log=False, a_exp_max=1.0, list_of_dump=None):
         metallicity (float): metallicity of cell
         energy_turb (float): turbulent energy of cell
     '''
-    # col_names = ["event", "id", "level", "mass", "x_star", "y_star", "z_star", "vel_x_star", "vel_y_star", "vel_z_star", "density", "vel_x", "vel_y", "vel_z", "temp", "metallicity", "energy_turb", "mask", "tag", "tau"]
     col_names = ["event", "id", "level", "mass", "x_star", "y_star", "z_star", "vel_x_star", "vel_y_star", "vel_z_star", "density", "vel_x", "vel_y", "vel_z", "temp", "metallicity", "energy_turb", "mask", "b_turb", "tag", "tau"]
     num_dump, id, level, mass, x, y, z, density, temperature, metallicity, energy_turb, b_turb, event, time = np.array([]), np.array([]), np.array([]), np.array([]), np.array([]), np.array([]), np.array([]), np.array([]), np.array([]), np.array([]), np.array([]), np.array([]), np.array([]), np.array([])
-    if list_of_dump == None: list_of_dump = get_list_of_dump()
-    if log: print("Reading from %d dumps" % len(list_of_dump))
-    for dump in list_of_dump:
+    if dump_list == None: dump_list = get_dump_list()
+    if log: print("Reading from %d dumps" % len(dump_list))
+    for dump in dump_list:
         print("Reading dump %d..." % dump)
         info = get_info(dump)
         if cgs:
-            # compute the age of the Universe
             integrand = lambda a: (info.Omega_m0 * a**(-1) + info.Omega_k0 + info.Omega_L0 * a**2)**(-1/2)
             age_universe = quad(integrand, 0, 1)[0] / info.H0
         for i in range(0, info.ncpu):
@@ -145,9 +151,7 @@ def get_star_cat(cgs=False, log=False, a_exp_max=1.0, list_of_dump=None):
                         density = np.concatenate((density, np.array(star['density'].data)))
                         energy_turb = np.concatenate((energy_turb, np.array(star['energy_turb'].data)))
                         time = np.concatenate((time, np.array(star['tau'].data)))
-        if info.a_exp > a_exp_max: break
-    # starbirth_cat = SimpleNamespace(num_dump=num_dump[event==BIRTH], id=id[event==BIRTH], level=level[event==BIRTH], mass=mass[event==BIRTH], coord=np.array([x[event==BIRTH], y[event==BIRTH], z[event==BIRTH]]), density=density[event==BIRTH], temperature=temperature[event==BIRTH], metallicity=metallicity[event==BIRTH], energy_turb=energy_turb[event==BIRTH], time=time[event==BIRTH])
-    # stardeath_cat = SimpleNamespace(num_dump=num_dump[event==DEATH], id=id[event==DEATH], level=level[event==DEATH], mass=mass[event==DEATH], coord=np.array([x[event==DEATH], y[event==DEATH], z[event==DEATH]]), density=density[event==DEATH], temperature=temperature[event==DEATH], metallicity=metallicity[event==DEATH], energy_turb=energy_turb[event==DEATH], time=time[event==DEATH])
+        if info.aexp > aexp_max: break
     starbirth_cat = SimpleNamespace(num_dump=num_dump[event==BIRTH], id=id[event==BIRTH], level=level[event==BIRTH], mass=mass[event==BIRTH], coord=np.array([x[event==BIRTH], y[event==BIRTH], z[event==BIRTH]]), density=density[event==BIRTH], temperature=temperature[event==BIRTH], metallicity=metallicity[event==BIRTH], energy_turb=energy_turb[event==BIRTH], b_turb=b_turb[event==BIRTH], time=time[event==BIRTH])
     stardeath_cat = SimpleNamespace(num_dump=num_dump[event==DEATH], id=id[event==DEATH], level=level[event==DEATH], mass=mass[event==DEATH], coord=np.array([x[event==DEATH], y[event==DEATH], z[event==DEATH]]), density=density[event==DEATH], temperature=temperature[event==DEATH], metallicity=metallicity[event==DEATH], energy_turb=energy_turb[event==DEATH], b_turb=b_turb[event==DEATH], time=time[event==DEATH])
     return starbirth_cat, stardeath_cat
@@ -172,7 +176,7 @@ def get_cool_tab(dump=None, n3=100):
         xion: ionization fraction
         mu: mean molecular weight
     '''
-    if dump == None: dump = get_list_of_dump()[-1]
+    if dump == None: dump = get_dump_list()[-1]
     cooling_table_path = os.path.join("output_%.5d" % dump, "cooling_%.5d.out" % dump)
     # read the file
     with FortranFile(cooling_table_path, 'r') as f:
@@ -264,22 +268,22 @@ def read_logfile():
 
     Returns
     time: running time
-    a_exp: expansion factor
+    aexp: expansion factor
     num_oct_level: number of octs per level
     num_oct_total: number of octs total
     '''
-    dump = get_list_of_dump()[-1]
+    dump = get_dump_list()[-1]
     info = get_info(dump)
     amr_level_max_coarse = info.amr_level_max + info.amr_level_coarse
-    time, a_exp = [], []
+    time, aexp = [], []
     num_oct_level = [[] for i in range(amr_level_max_coarse)]
-    list_of_logfile = sorted(get_stdout("ls *.log").split())
+    logfile_list = sorted(get_stdout("ls *.log").split())
     time_now = 0
-    for logfile in list_of_logfile:
+    for logfile in logfile_list:
         stdout_split = get_stdout("grep -B1 -n 'Computing new cooling table' %s | awk -F ' ' '{print $9}'" % logfile).split()
         for s in stdout_split:
-            try: a_exp.append(float(s))
-            except: a_exp.append(a_exp[-1])
+            try: aexp.append(float(s))
+            except: aexp.append(aexp[-1])
         stdout_split = get_stdout("grep -A%d -n 'Mesh structure' %s | awk -F ' ' '{print $5}'" % (amr_level_max_coarse, logfile)).split()
         for i in range(amr_level_max_coarse):
             for s in stdout_split[i::amr_level_max_coarse]:
@@ -288,26 +292,26 @@ def read_logfile():
         stdout_split = get_stdout("grep -n 'Total running time' %s | awk -F ' ' '{print $5}'" % logfile).split()
         time += [float(t) + time_now for t in stdout_split]
         time_now = time[-1]
-    a_exp = np.array(a_exp)
+    aexp = np.array(aexp)
     num_oct_level = np.array(num_oct_level)
     num_oct_tot = np.sum(num_oct_level, axis=0)
     time = np.array(time)
-    return time, a_exp, num_oct_level, num_oct_tot
+    return time, aexp, num_oct_level, num_oct_tot
 
 def read_timer():
     '''  
     Read the timer file. 
     '''
-    list_of_timing_category = ["coarse levels", "refine", "load balance", "particles", "rho", "poisson", "feedback", "cooling", "hydro - set unew", "hydro - godunov", "hydro - rev ghostzones", "hydro - set uold", "hydro - ghostzones", "hydro upload fine", "flag", "io", "courant", "movie"]
-    list_of_stat = ["min", "max", "avg", "std", "relstd", "percent"]
-    timing = {category: {stat: [] for stat in list_of_stat} for category in list_of_timing_category}
+    timing_cat_list = ["coarse levels", "refine", "load balance", "particles", "rho", "poisson", "feedback", "cooling", "hydro - set unew", "hydro - godunov", "hydro - rev ghostzones", "hydro - set uold", "hydro - ghostzones", "hydro upload fine", "flag", "io", "courant", "movie"]
+    stat_list = ["min", "max", "avg", "std", "relstd", "percent"]
+    timing = {category: {stat: [] for stat in stat_list} for category in timing_cat_list}
     timing["dump"] = []
     for file in sorted(os.listdir()):
         if file[:6] == 'output':
             timer_path = os.path.join(file, "timer%s.txt" % file[6:])
             with open(timer_path, "r") as f:
                 timing["dump"].append(int(file[7:]))
-                list_of_category_copy = list_of_timing_category.copy()
+                cat_list_copy = timing_cat_list.copy()
                 for line in f.readlines()[3:-1]:
                     line_split = line.split()
                     category = " ".join(line_split[8:])
@@ -317,8 +321,8 @@ def read_timer():
                     timing[category]["std"].append(float(line_split[3]))
                     timing[category]["relstd"].append(float(line_split[4]))
                     timing[category]["percent"].append(float(line_split[5]))
-                    list_of_category_copy.remove(category)
-                for category in list_of_category_copy:
-                    for stat in list_of_stat:
+                    cat_list_copy.remove(category)
+                for category in cat_list_copy:
+                    for stat in stat_list:
                         timing[category][stat].append(0.)
     return timing
