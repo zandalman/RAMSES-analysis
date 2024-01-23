@@ -5,7 +5,6 @@ affine = lambda x, a, b: a + b*x
 quadratic = lambda x, a, b, c: a + b*x + c*x**2
 cubic = lambda x, a, b, c, d: a + b*x + c*x**2 + d*x**3
 powerlaw = lambda x, a, b: a*x**b
-
 class Terminal:
     ''' Context manager for running commands in the terminal from Python. '''
     def __enter__(self):
@@ -75,25 +74,17 @@ def get_stdout(cmd):
     return stdout
 
 def clear_figures():
-    '''
-    Move all current figures to legacy folder.
-    '''
+    ''' Move all current figures to legacy folder. '''
     with Terminal() as terminal:
         os.chdir(save_dir)
         os.system("mv *.png ../legacy/")
 
 def git_commit(git_message=None):
-    '''
-    Commit relevant files to git and push changes.
-    
-    Args
-    git_message (str): message for the commit
-    '''
+    ''' Commit relevant files to git and push changes. '''
     with Terminal() as terminal:
         
         os.chdir(analysis_dir)
         if git_message == None: git_message = "pushing updates to analysis code"
-        
         os.system("git add *.py")
         os.system("git add *.ipynb")
         os.system("git commit -m '%s'" % git_message)
@@ -121,14 +112,11 @@ def dot(A, B):
     ''' Compute the dot product of two vector fields. '''
     return np.sum(A * B, axis=0)
 
-def proj(A, B, do_norm=True):
+def proj(A, B):
     ''' Compute the projection of one vector field onto another. '''
-    if do_norm:
-        return dot(A, B) / norm(B)
-    else:
-        return (dot(A, B) / norm(B)**2)[None, :, :, :] * B
+    return (dot(A, B) / norm(B)**2)[None, :, :, :] * B
     
-def calc_epsilon_SF(rho, energy_turb, temp, dx, b_turb=1.0, gamma=5/3):
+def calc_eps_sf(density, energy_turb, temp, dx, b_turb=1.0, gamma=5/3):
     ''' 
     Star formation efficiency in the multi-freefall model.
     See Federrath&Klessen2012 (https://arxiv.org/pdf/1209.2856.pdf) and Kretschmer&Teyssier2021 (https://arxiv.org/pdf/1906.11836.pdf) for details.
@@ -147,13 +135,13 @@ def calc_epsilon_SF(rho, energy_turb, temp, dx, b_turb=1.0, gamma=5/3):
     Returns
     epsilon_SF: star formation efficiency
     '''
-    cs = np.sqrt(gamma * const.k_B * temp / const.m_p) # sound speed
-    mach_turb = np.sqrt(2/3 * energy_turb) / cs # turbulent Mach number
-    alpha_vir = 15 / np.pi * cs**2 * (1 + mach_turb**2) / (const.G * rho * dx**2) # virial parameter
+    c_s = np.sqrt(gamma * const.k_B * temp / const.m_p) # sound speed
+    mach_turb = np.sqrt(2/3 * energy_turb) / c_s # turbulent Mach number
+    alpha_vir = 15 / np.pi * c_s**2 * (1 + mach_turb**2) / (const.G * density * dx**2) # virial parameter
     s_crit = np.log(alpha_vir * (1 + 2 * mach_turb**4 / (1 + mach_turb**2))) # lognormal critical density for star formation
     sigma_s = np.sqrt(np.log(1 + b_turb**2 * mach_turb**2)) # standard deviation of the lognormal subgrid density distribution
-    epsilon_SF = 1/2 * np.exp(3/8 * sigma_s**2) * (1 + erf((sigma_s**2 - s_crit) / np.sqrt(2 * sigma_s**2))) # star formation efficiency
-    return epsilon_SF
+    eps_sf = 1/2 * np.exp(3/8 * sigma_s**2) * (1 + erf((sigma_s**2 - s_crit) / np.sqrt(2 * sigma_s**2))) # star formation efficiency
+    return eps_sf
 
 def a_exp_to_proper_time(a, Omega_m0=const.Omega_m0, Omega_k0=const.Omega_k0, Omega_L0=const.Omega_L0, H0=const.H0):
     ''' Convert expansion factor to proper time.'''
@@ -384,7 +372,6 @@ def get_biggest_halo_coord_cubic(a_exp):
 
 def get_dump(a_exp):
     ''' Get the dump number for a given expansion factor. '''
-    stdout_split = get_stdout("grep aexp output_00*/info*").split()
     list_of_dump = get_list_of_dump()
     list_of_a_exp = np.array([get_info(dump).a_exp for dump in list_of_dump])
     dump_idx = np.argmin(np.abs(list_of_a_exp - a_exp))
