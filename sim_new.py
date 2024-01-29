@@ -1,7 +1,6 @@
 import os
 import numpy as np
 import matplotlib.pyplot as plt
-from mpl_toolkits.axes_grid1 import make_axes_locatable
 from functools import cached_property
 import const
 from config import *
@@ -123,6 +122,7 @@ class Sim(object):
         self.dA = self.dx**2
         self.dV = self.dx**3
             
+        self.aexp = self.a_exp
         self.redshift = 1 / self.aexp - 1
         self.H = self.H0 * np.sqrt(self.Omega_m0 / self.aexp**3 + self.Omega_k0 / self.aexp**2 + self.Omega_L0)
         self.rho_crit = 3 * self.H**2 / (8 * np.pi * const.G)
@@ -328,40 +328,6 @@ class Sim(object):
         im = ax.imshow(img, origin='lower', extent=[-size_img/unit/2, size_img/unit/2, -size_img/unit/2, size_img/unit/2], vmin=vmin, vmax=vmax, cmap=cmap)
         return im
     
-    def add_cbar_to_ax(self, im, ax=None, ticks=None, label=None, size="5%", pad=0.1, orientation='vertical', extend='neither'):
-        '''
-        Add a colorbar to the axis.
-
-        Args
-        im: image object
-        ax: axis object
-        ticks: array of ticks
-        label (str): label
-        orientation (str): colorbar orientation
-        size (str): colorbar size
-        pad (float): colorbar padding
-
-        Returns 
-        cbar: colorbar object
-        '''
-        if ax == None: ax = plt.gca()
-        divider = make_axes_locatable(ax)
-        if orientation == "horizontal":
-            cax = divider.append_axes("top", size=size, pad=pad)
-            cbar = plt.colorbar(im, cax=cax, ticks=ticks, label=label, orientation="horizontal", extend=extend)
-            cax.xaxis.set_ticks_position("top")
-            cax.xaxis.set_label_position("top")
-        elif orientation == "vertical":
-            cax = divider.append_axes("right", size=size, pad=pad)
-            cbar = plt.colorbar(im, cax=cax, ticks=ticks, label=label, orientation="vertical", extend=extend)
-        return cbar
-    
-    def add_cbar_to_fig(self, im, fig, ticks=None, label=None, bbox=[.9, .11, .02, .77]):
-        ''' Add a colorbar to the figure. '''
-        cax = fig.add_axes(bbox)
-        cbar = plt.colorbar(im, cax=cax, ticks=ticks, label=label)
-        return cbar
-    
     def add_dis_to_ax(self, ax, dis, size_img=None, unit=const.kpc, label_unit='kpc', color='white'):
         '''
         Add a distance annotation to the axis.
@@ -487,3 +453,8 @@ class Sim(object):
         ''' Star formation rate density. '''
         return self.eps_sf * self.density / self.t_ff
     
+    @cached_property
+    def entropy(self):
+        ''' Entropy. '''
+        return self.pressure / self.density**self.gamma
+

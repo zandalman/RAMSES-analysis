@@ -3,6 +3,8 @@ from datetime import datetime
 from types import SimpleNamespace
 import numpy as np
 import matplotlib.pyplot as plt
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+from matplotlib.lines import Line2D
 from scipy.integrate import quad
 from scipy.optimize import fsolve
 from scipy.special import erf
@@ -24,59 +26,12 @@ class Terminal:
     def __exit__(self, exc_type, exc_value, exc_tb):
         os.chdir(self.cwd)
 
-def median_weighted(field, weights):
+def median_weighted(field, weight):
     ''' Get the weighted median of a distribution. '''
     idx_sorted = np.argsort(field)
-    cumsum = np.cumsum(weights[idx_sorted])
+    cumsum = np.cumsum(weight[idx_sorted])
     field_median = field[idx_sorted[np.searchsorted(cumsum, 0.5 * cumsum[-1])]]
     return field_median
-
-def plot_pdf(field, extrema, ax=None, weights=None, nbins=200, do_log=True, label='misc var', show_median=False, show_mean=False, do_axes_labels=True, flip_axes=False):
-    ''' 
-    Plot a PDF of a distribution. 
-    
-    Args
-    ax: matplotlib axis object
-    field: field
-    extrema: tuple of min and max field value
-    weights: weights
-    nbins (int): number of bins
-    do_log (bool): use the log of the field
-    label (str): label for the PDF
-    show_median (bool): plot a vertical line for the median of the distribution
-    show_mean (bool): plot a vertical line for the mean of the distribution
-    flip_axes (bool): flip the x and y axes
-    '''
-    if ax == None: ax = plt.gca()
-    if np.all(weights) == None: weights = np.ones_like(field)
-    if do_log: 
-        field_new = np.log10(field + epsilon)
-    else:
-        field_new = field
-    if do_log: extrema = (np.log10(extrema[0]), np.log10(extrema[1]))
-    hist, bins = np.histogram(field_new, weights=weights, bins=nbins, range=extrema)
-    field_bins = bins[:-1] + np.diff(bins)[0]
-    if do_log: field_bins = 10**field_bins
-    pdf = hist
-    pdf = pdf / np.sum(weights) / np.diff(bins)[0] # normalize the pdf
-    if show_median: field_median = median_weighted(field, weights)
-    if show_mean: field_mean = np.sum(field * weights) / np.sum(weights)
-    if flip_axes:
-        ax.plot(pdf, field_bins, lw=2)
-        if do_log: ax.set_yscale('log')
-        if do_axes_labels:
-            ax.set_ylabel(label)
-            ax.set_xlabel('PDF')
-        if show_median: ax.axhline(y=field_median, lw=2, color='red', label=('median ' + label + r'$ = %.3g$' % field_median))
-        if show_mean: ax.axhline(y=field_mean, lw=2, color='orange', label=('mean ' + label + r'$ = %.3g$' % field_mean))
-    else:
-        ax.plot(field_bins, pdf, lw=2)
-        if do_log: ax.set_xscale('log')
-        if do_axes_labels:
-            ax.set_xlabel(label)
-            ax.set_ylabel('PDF')
-        if show_median: ax.axvline(x=field_median, lw=2, color='red', label=('median ' + label + r'$ = %.3g$' % field_median))
-        if show_mean: ax.axvline(x=field_mean, lw=2, color='orange', label=('mean ' + label + r'$ = %.3g$' % field_mean))
 
 def get_stdout(cmd):
     ''' Return the standard output of a command line directive '''
@@ -124,14 +79,34 @@ def dot(A, B):
 def proj(A, B):
     ''' Compute the projection of one vector field onto another. '''
     return (dot(A, B) / norm(B)**2)[None, :, :, :] * B
-    
-def calc_eps_sf(density, energy_turb, temp, dx, b_turb=1.0, gamma=5/3):
+
+def calc_eps_sf(alpha_vir, mach_turb, b_turb=1.0):
     ''' 
     Star formation efficiency in the multi-freefall model.
     See Federrath&Klessen2012 (https://arxiv.org/pdf/1209.2856.pdf) and Kretschmer&Teyssier2021 (https://arxiv.org/pdf/1906.11836.pdf) for details.
 
     Args
-    rho: density
+    alpha_vir: virial parameter
+    mach_turb: turbulent Mach number
+    b_turb: turbulence forcing parameter
+        varies smoothly between b ~ 1/3 for purely solenoidal (divergence-free) forcing 
+        and b ~ 1 for purely compressive (curl-free) forcing
+        A stochastic mixture of forcing modes in 3-d space leads to b ~ 0.4
+
+    Returns
+    eps_sf: star formation efficiency
+    '''
+    s_crit = np.log(alpha_vir * (1 + 2 * mach_turb**4 / (1 + mach_turb**2))) # lognormal critical density for star formation
+    sigma_s = np.sqrt(np.log(1 + b_turb**2 * mach_turb**2)) # standard deviation of the lognormal subgrid density distribution
+    eps_sf = 1/2 * np.exp(3/8 * sigma_s**2) * (1 + erf((sigma_s**2 - s_crit) / np.sqrt(2 * sigma_s**2))) # star formation efficiency
+    return eps_sf
+    
+def calc_eps_sf2(density, energy_turb, temp, dx, b_turb=1.0, gamma=5/3):
+    ''' 
+    Wrapper for calc_eps_sf, in terms of more basic quantities.
+
+    Args
+    density: density
     energy_turb: turbulent energy
     temp: temperature
     dx: resolution
@@ -142,15 +117,12 @@ def calc_eps_sf(density, energy_turb, temp, dx, b_turb=1.0, gamma=5/3):
     gamma: adiabatic index
 
     Returns
-    epsilon_SF: star formation efficiency
+    eps_sf: star formation efficiency
     '''
     c_s = np.sqrt(gamma * const.k_B * temp / const.m_p) # sound speed
     mach_turb = np.sqrt(2/3 * energy_turb) / c_s # turbulent Mach number
     alpha_vir = 15 / np.pi * c_s**2 * (1 + mach_turb**2) / (const.G * density * dx**2) # virial parameter
-    s_crit = np.log(alpha_vir * (1 + 2 * mach_turb**4 / (1 + mach_turb**2))) # lognormal critical density for star formation
-    sigma_s = np.sqrt(np.log(1 + b_turb**2 * mach_turb**2)) # standard deviation of the lognormal subgrid density distribution
-    eps_sf = 1/2 * np.exp(3/8 * sigma_s**2) * (1 + erf((sigma_s**2 - s_crit) / np.sqrt(2 * sigma_s**2))) # star formation efficiency
-    return eps_sf
+    return calc_eps_sf(alpha_vir, mach_turb, b_turb)
 
 def aexp_to_proper_time(a, Omega_m0=const.Omega_m0, Omega_k0=const.Omega_k0, Omega_L0=const.Omega_L0, H0=const.H0):
     ''' Convert expansion factor to proper time.'''
@@ -303,79 +275,151 @@ def vec_conv(field, coord, sys1, sys2):
         field_new[PH] = field[PH2]
     return field_new
 
-def calc_1d_profile(x, y, extrema=None, do_log_x=True, nbins=100, weight=None, cond=None, do_cum=False):
+def calc_hist(field, vmin=None, vmax=None, weight=None, nbins=256, do_log=True, do_norm=False):
     '''
-    Compute radial profile of field averaged over spherical shells.
+    Compute the histogram of a field.
 
     Args
-    x, y: quantities with which to 
-    extrema: tuple of max and min field values
-    do_log_x (bool): space bins logorithmically
+    field: field
+    vmin, vmax (float): min and max field values
+    weight: weight
     nbins (int): number of bins
-    weight: weight array
-    cond: conditional array to select a specific region
+    do_log (bool): use the log of the field
+    do_norm (bool): normalize the histogram i.e. generate a PDF
+
+    Returns
+    field1d: field bin centers
+    hist: histogram of the field
+    '''
+    if vmin == None: vmin = np.min(field)
+    if vmax == None: vmax = np.max(field)
+    if np.all(weight) == None: weight = np.ones_like(field)
+    if do_log: field, vmin, vmax = np.log10(field), np.log10(vmin), np.log10(vmax)
+    hist, bin_edge = np.histogram(field.flatten(), weights=weight.flatten(), bins=nbins, range=(vmin, vmax))
+    bin_width = np.diff(bin_edge)[0]
+    field1d = bin_edge[:-1] + bin_width/2
+    if do_log: field1d = 10**field1d
+    if do_norm: hist /= (np.sum(weight) * bin_width)
+    return field1d, hist
+
+def calc_profile1d(coord, field, vmin=None, vmax=None, weight=None, nbins=256, do_log=True, do_cum=False):
+    '''
+    Compute a 1d profile of field with respect to a coordinate.
+
+    Args
+    coord: coordinate
+    field: field
+    vmin, vmax (float): min and max field values
+    weight: weight
+    nbins (int): number of bins
+    do_log (bool): use the log of the field
     do_cum (bool): cumulative 1d profile
 
     Returns
-    r_1d: array of radial bins
-    field_1d: array of spherically averaged field values
+    coord1d: coord bin centers
+    field1d: 1d profile of field with respect to coordinate
     '''
-    if do_log_x:
-        x = np.log10(x)
-        extrema = (np.log10(extrema[0]), np.log10(extrema[1]))
-    
-    if np.all(cond) == None: cond = 1.
-    if np.all(weight) == None: weight = 1.
-
-    counts1, bins = np.histogram(x.flatten(), weights=(y * weight * cond).flatten(), bins=nbins, range=extrema)
-    counts2, bins = np.histogram(x.flatten(), weights=(np.ones_like(y) * weight * cond).flatten(), bins=nbins, range=extrema)
-
-    x_1d = bins[:-1] + np.diff(bins)[0]
+    if vmin == None: vmin = np.min(coord)
+    if vmax == None: vmax = np.max(coord)
+    if np.all(weight) == None: weight = np.ones_like(field)
+    coord1d, weighted_field1d = calc_hist(coord, vmin=vmin, vmax=vmax, weight=(field * weight), nbins=nbins, do_log=do_log, do_norm=False)
+    coord1d, weight1d = calc_hist(coord, vmin=vmin, vmax=vmax, weight=weight, nbins=nbins, do_log=do_log, do_norm=False)
     if do_cum:
-        y_1d = np.cumsum(counts1) / np.cumsum(counts2)
+        field1d = np.cumsum(weighted_field1d) / np.cumsum(weight1d)
     else:
-        y_1d = counts1 / counts2
+        field1d = weighted_field1d / weight1d
+    return coord1d, field1d
 
-    if do_log_x: x_1d = 10**x_1d
-
-    return x_1d, y_1d
-
-def calc_phase(field1, field2, extrema1, extrema2, do_log1=True, do_log2=True, nbins=30, cond=None, weight=None):
+def calc_hist2d(field1, field2, vmin1=None, vmax1=None, vmin2=None, vmax2=None, weight=None, nbins=30, do_log1=True, do_log2=True, do_norm=False):
     '''
     Compute distribution of a quantity in a two-dimensional phase space.
 
     Args
     field1, field2: fields
-    extrema1, extrema2: tuples of max and min field values
-    do_log1, do_log2 (bool): space bins logorithmically
-    nbins (int): number of bins
-    cond: conditional array to select a specific region
+    vmin1, vmax1, vmin2, vmax2 (float): min and max field values
     weight: weight for the bins
+    nbins (int): number of bins
+    do_log1, do_log2 (bool): use the log of the field
+    do_norm (bool): normalize the histogram i.e. generate a pdf
 
     Returns
-    field1_2d, field2_2d: array of field bins
-    weight_2d: array of weight per bin
+    field12d, field22d: field bin centers
+    hist2d: 2d histogram
     '''
-    if do_log1: 
-        field1 = np.log10(field1)
-        extrema1 = (np.log10(extrema1[0]), np.log10(extrema1[1]))
-    if do_log2:
-        field2 = np.log10(field2)
-        extrema2 = (np.log10(extrema2[0]), np.log10(extrema2[1]))
-    if np.all(weight) == None: weight = 1.
-    if np.all(cond) == None: cond = 1.
-    hist, x_bins, y_bins = np.histogram2d(field1.flatten(), field2.flatten(), weights=(weight * cond).flatten(), bins=(nbins, nbins), range=[extrema1, extrema2])
-    field1_2d = x_bins[:-1] + np.diff(x_bins)[0]
-    field2_2d = y_bins[:-1] + np.diff(y_bins)[0]
-    if do_log1: field1_2d = 10**field1_2d
-    if do_log2: field2_2d = 10**field2_2d
-    weight_2d = hist.T
-    return field1_2d, field2_2d, weight_2d
+    if vmin1 == None: vmin1 = np.min(field1)
+    if vmax1 == None: vmax1 = np.max(field1)
+    if vmin2 == None: vmin2 = np.min(field2)
+    if vmax2 == None: vmax2 = np.max(field2)
+    if np.all(weight) == None: weight = np.ones_like(field1)
+    if do_log1: field1, vmin1, vmax1 = np.log10(field1), np.log10(vmin1), np.log10(vmax1)
+    if do_log2: field2, vmin2, vmax2 = np.log10(field2), np.log10(vmin2), np.log10(vmax2)
+    hist2d, xbin_edge, ybin_edge = np.histogram2d(field1.flatten(), field2.flatten(), weights=weight.flatten(), bins=(nbins, nbins), range=[(vmin1, vmax1), (vmin2, vmax2)])
+    xbin_width, ybin_width = np.diff(xbin_edge)[0], np.diff(ybin_edge)[0]
+    field12d = xbin_edge[:-1] + xbin_width/2
+    field22d = ybin_edge[:-1] + ybin_width/2
+    if do_log1: field12d = 10**field12d
+    if do_log2: field22d = 10**field22d
+    hist2d = hist2d.T
+    if do_norm: hist2d /= (np.sum(weight) * xbin_width * ybin_width)
+    return field12d, field22d, hist2d
+
+def get_bin_center(vmin, vmax, nbins, do_log):
+    ''' Get histogram bin centers. '''
+    if do_log:
+        bin_width = (np.log10(vmax) - np.log10(vmin)) / (2 * nbins)
+        bin_center = 10**(np.linspace(np.log10(vmin), np.log10(vmax), nbins+1) + bin_width)
+    else:
+        bin_width = (vmax - vmin) / (2 * nbins)
+        bin_center = np.linspace(vmin, vmax, nbins+1) + bin_width
+    return bin_center[:-1]
+
+def plot_pdf2d(field1, field2, vmin1=None, vmax1=None, vmin2=None, vmax2=None, vmin3=None, vmax3=None, weight=None, nbins=30, do_log1=True, do_log2=True, do_log3=True, fig=None):
+    '''
+    Compute distribution of a quantity in a two-dimensional phase space.
+
+    Args
+    field1, field2: fields
+    vmin1, vmax1, vmin2, vmax2, vmin3, vmax3 (float): min and max field values
+    weight: weight for the bins
+    nbins (int): number of bins
+    do_log1, do_log2, do_log3 (bool): use the log of the field
+    fig: figure object
+
+    Returns
+    axs: figure axes
+    field12d, field2d: field bin centers
+    pdf2d: 2d PDF
+    im: image object
+    '''
+    if fig == None: fig = plt.figure(figsize=(4, 4))
+    
+    ax1 = fig.add_axes([0, 0, 1, 1])
+    field12d, field22d, pdf2d = calc_hist2d(field1, field2, vmin1=vmin1, vmax1=vmax1, vmin2=vmin2, vmax2=vmax2, weight=weight, nbins=nbins, do_log1=do_log1, do_log2=do_log2, do_norm=True)
+    if vmin3 == None: vmin3 == np.min(pdf2d[pdf2d > 0])
+    if vmax3 == None: vmax3 == np.max(pdf2d[pdf2d > 0])
+    if do_log3: pdf2d, vmin3, vmax3 = np.log10(pdf2d + epsilon), np.log10(vmin3), np.log10(vmax3)
+    im = ax1.pcolormesh(field12d, field22d, pdf2d, vmin=vmin3, vmax=vmax3)
+    if do_log1: ax1.set_xscale('log')
+    if do_log2: ax1.set_yscale('log')
+    
+    ax2 = fig.add_axes([0, 1, 1, 0.3], sharex=ax1)
+    plt.setp(ax2.get_xticklabels(), visible=False)
+    field11d, pdf11d = calc_hist(field1, vmin=vmin1, vmax=vmax1, weight=weight, nbins=nbins, do_log=do_log1, do_norm=True)
+    ax2.plot(field11d, pdf11d, lw=2)
+    
+    ax3 = fig.add_axes([1, 0, 0.3, 1], sharey=ax1)
+    plt.setp(ax3.get_yticklabels(), visible=False)
+    field21d, pdf21d = calc_hist(field2, vmin=vmin2, vmax=vmax2, weight=weight, nbins=nbins, do_log=do_log2, do_norm=True)    
+    ax3.plot(pdf21d, field21d, lw=2)
+
+    axs = [ax1, ax2, ax3]
+    if do_log3: pdf2d = 10**(pdf2d) - epsilon
+
+    return axs, field12d, field22d, pdf2d, im
+
 
 def get_biggest_halo_coord_cubic(aexp):
-    '''
-    Estimate the coordinates of the biggest halo using a cubic fit to each coordinate.
-    '''
+    ''' Estimate the coordinates of the biggest halo using a cubic fit to each coordinate. '''
     biggest_halo_coord = np.array([cubic(aexp, *halo_poptx), cubic(aexp, *halo_popty), cubic(aexp, *halo_poptz)])
     return biggest_halo_coord
 
@@ -456,3 +500,56 @@ def move_to_sim_dir(sim_round, sim_name, do_print=True):
     os.chdir(sim_dir)
     if do_print: print("Moving to directory '%s'." % sim_dir)
     return sim_dir
+
+def add_cbar_to_ax(im, ax=None, ticks=None, label=None, size="5%", pad=0.1, orientation='vertical', extend='neither'):
+    '''
+    Add a colorbar to the axis.
+
+    Args
+    im: image object
+    ax: axis object
+    ticks: array of ticks
+    label (str): label
+    orientation (str): colorbar orientation
+    size (str): colorbar size
+    pad (float): colorbar padding
+
+    Returns 
+    cbar: colorbar object
+    '''
+    if ax == None: ax = plt.gca()
+    divider = make_axes_locatable(ax)
+    if orientation == "horizontal":
+        cax = divider.append_axes("top", size=size, pad=pad)
+        cbar = plt.colorbar(im, cax=cax, ticks=ticks, label=label, orientation="horizontal", extend=extend)
+        cax.xaxis.set_ticks_position("top")
+        cax.xaxis.set_label_position("top")
+    elif orientation == "vertical":
+        cax = divider.append_axes("right", size=size, pad=pad)
+        cbar = plt.colorbar(im, cax=cax, ticks=ticks, label=label, orientation="vertical", extend=extend)
+    return cbar
+
+def add_cbar_to_fig(im, fig, ticks=None, label=None, bbox=[.9, .11, .02, .77], extend='neither'):
+    ''' Add a colorbar to the figure. '''
+    cax = fig.add_axes(bbox)
+    cbar = plt.colorbar(im, cax=cax, ticks=ticks, label=label, extend=extend)
+    return cbar
+
+def add_custleg_to_ax(label_list, color_list, loc=None, lw=2, ax=None):
+    ''' Add a custom legend to the axis. '''
+    if ax == None: ax = plt.gca()
+    custom_line_list = [Line2D([0], [0], color=color, lw=lw) for color in color_list]
+    ax.legend(custom_line_list, label_list, loc=loc)
+
+def get_numline(filename):
+    ''' Quickly compute the number of lines in a file. '''
+    with open(filename, "rbU") as f:
+        num_line = sum(1 for _ in f)
+    return num_line
+
+def downsample_hist(bin_center, hist, fac_ds):
+    ''' Downsample a histogram. '''
+    bin_center_ds = bin_center[::fac_ds]
+    if hist.size % fac_ds != 0: hist = hist[:-(hist.size%fac_ds)]
+    hist_ds = np.sum(hist.reshape(fac_ds, hist.size//fac_ds), axis=0) / fac_ds
+    return bin_center_ds, hist_ds
