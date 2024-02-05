@@ -80,7 +80,7 @@ def proj(A, B):
     ''' Compute the projection of one vector field onto another. '''
     return (dot(A, B) / norm(B)**2)[None, :, :, :] * B
 
-def calc_eps_sf(alpha_vir, mach_turb, b_turb=1.0):
+def calc_eps_sf(alpha_vir, mach_turb, b_turb=1.0, eps_sf_loc=1.0):
     ''' 
     Star formation efficiency in the multi-freefall model.
     See Federrath&Klessen2012 (https://arxiv.org/pdf/1209.2856.pdf) and Kretschmer&Teyssier2021 (https://arxiv.org/pdf/1906.11836.pdf) for details.
@@ -91,17 +91,17 @@ def calc_eps_sf(alpha_vir, mach_turb, b_turb=1.0):
     b_turb: turbulence forcing parameter
         varies smoothly between b ~ 1/3 for purely solenoidal (divergence-free) forcing 
         and b ~ 1 for purely compressive (curl-free) forcing
-        A stochastic mixture of forcing modes in 3-d space leads to b ~ 0.4
+    eps_sf_loc: SFE on the sonic scale
 
     Returns
     eps_sf: star formation efficiency
     '''
     s_crit = np.log(alpha_vir * (1 + 2 * mach_turb**4 / (1 + mach_turb**2))) # lognormal critical density for star formation
     sigma_s = np.sqrt(np.log(1 + b_turb**2 * mach_turb**2)) # standard deviation of the lognormal subgrid density distribution
-    eps_sf = 1/2 * np.exp(3/8 * sigma_s**2) * (1 + erf((sigma_s**2 - s_crit) / np.sqrt(2 * sigma_s**2))) # star formation efficiency
+    eps_sf = eps_sf_loc/2 * np.exp(3/8 * sigma_s**2) * (1 + erf((sigma_s**2 - s_crit) / np.sqrt(2 * sigma_s**2))) # star formation efficiency
     return eps_sf
     
-def calc_eps_sf2(density, energy_turb, temp, dx, b_turb=1.0, gamma=5/3):
+def calc_eps_sf2(density, energy_turb, temp, dx, b_turb=1.0, eps_sf_loc=1.0):
     ''' 
     Wrapper for calc_eps_sf, in terms of more basic quantities.
 
@@ -113,16 +113,15 @@ def calc_eps_sf2(density, energy_turb, temp, dx, b_turb=1.0, gamma=5/3):
     b_turb: turbulence forcing parameter
         varies smoothly between b ~ 1/3 for purely solenoidal (divergence-free) forcing 
         and b ~ 1 for purely compressive (curl-free) forcing
-        A stochastic mixture of forcing modes in 3-d space leads to b ~ 0.4
-    gamma: adiabatic index
+    eps_sf_loc: SFE on the sonic scale
 
     Returns
     eps_sf: star formation efficiency
     '''
-    c_s = np.sqrt(gamma * const.k_B * temp / const.m_p) # sound speed
+    c_s = np.sqrt(const.k_B * temp / const.m_p) # sound speed
     mach_turb = np.sqrt(2/3 * energy_turb) / c_s # turbulent Mach number
     alpha_vir = 15 / np.pi * c_s**2 * (1 + mach_turb**2) / (const.G * density * dx**2) # virial parameter
-    return calc_eps_sf(alpha_vir, mach_turb, b_turb)
+    return calc_eps_sf(alpha_vir, mach_turb, b_turb=b_turb, eps_sf_loc=eps_sf_loc)
 
 def aexp_to_proper_time(a, Omega_m0=const.Omega_m0, Omega_k0=const.Omega_k0, Omega_L0=const.Omega_L0, H0=const.H0):
     ''' Convert expansion factor to proper time.'''

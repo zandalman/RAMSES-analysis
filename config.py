@@ -31,16 +31,20 @@ sim_name_to_latex = {
     "mff-dxloc": r"Multi-Freefall Model ($dx_{\rm loc}$)",
     "bturbfunc": r"Variable $b_{\rm turb}$",
     "bturb0p3": r"$b_{\rm turb} = 0.3$",
-    "bturb1p0": r"$b_{\rm turb} = 1.0$",
+    "fiducial": r"fiducial model",
     "bturbfunc_highres": r"Variable $b_{\rm turb}$ (highres)",
     "bturb0p3_highres": r"$b_{\rm turb} = 0.3$ (highres)",
     "bturb1p0_highres": r"$b_{\rm turb} = 1.0$ (highres)",
-    "fastfeedback": r"$b_{\rm turb} = 1.0$, $t_{\rm fb} = 0.5~{\rm Myr}$",
+    "fastfeedback": r"$t_{\rm fbk} = 0.5~{\rm Myr}$",
     "temploc": "Local sound speed",
     "tempfixedcut": "Fixed sound speed with cutoff",
     "bturbfunc_jeans": r"Variable $b_{\rm turb}$ with Jeans refine",
     "mstar0p2": r"$m_* = 0.2$",
-    "mstar5p0": r"$m_* = 5.0$"
+    "mstar5p0": r"$m_* = 5.0$",
+    "mstar0p2cut0p01": r"$m_* = 0.2$, $\varepsilon_{\rm SF} > 0.01$",
+    "eps0p2": r"$\varepsilon_{\rm SF, loc} = 0.2$",
+    "eps5p0": r"$\varepsilon_{\rm SF, loc} = 5.0$",
+    "instantfeedback": r"$t_{\rm fbk} = 0.0~{\rm Myr}$"
 }
 
 defaults = {

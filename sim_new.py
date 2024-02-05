@@ -89,8 +89,6 @@ class Sim(object):
     sim_latex (str): latex string of the simulation, for plotting
     sim_dir (str): path to the simulation data
     save_dir (str): path of the directory to save figures
-    
-    gamma (float): adiabatic index
     '''
     def __init__(self, sim_round, sim_name, npz_file):
         
@@ -99,7 +97,6 @@ class Sim(object):
         self.sim_latex = sim_name_to_latex[self.sim_name]
         self.sim_dir = move_to_sim_dir(self.sim_round, self.sim_name)
         self.save_dir = os.path.join(save_dir, "round%d" % self.sim_round, self.sim_name)
-        self.gamma = 5/3
         
         self.npz_file = npz_file
         if self.npz_file == None:
@@ -122,7 +119,7 @@ class Sim(object):
         self.dA = self.dx**2
         self.dV = self.dx**3
             
-        self.aexp = self.a_exp
+        if hasattr(self, 'a_exp'): self.aexp = self.a_exp
         self.redshift = 1 / self.aexp - 1
         self.H = self.H0 * np.sqrt(self.Omega_m0 / self.aexp**3 + self.Omega_k0 / self.aexp**2 + self.Omega_L0)
         self.rho_crit = 3 * self.H**2 / (8 * np.pi * const.G)
@@ -344,20 +341,18 @@ class Sim(object):
         ax.plot([-0.9*size_img/unit/2, (-0.9*size_img/2 + dis)/unit], [0.9*size_img/unit/2, 0.9*size_img/unit/2], color='white', lw=3)
         ax.annotate('%.3g %s' % (dis/unit, label_unit), ((-0.9*size_img + dis)/unit/2, 0.85*size_img/2/unit), color='white', horizontalalignment='center', verticalalignment='top', fontsize=14)
 
-    def mean(self, field, weight, cond):
+    def mean(self, field, weight=None):
         ''' Return the mean value of a field. '''
-        field, weight, cond = self.get_field_input(field), self.get_field_input(weight), self.get_field_input(cond)
-        if np.all(cond) == None: cond = np.ones_like(field)
         if np.all(weight) == None: weight = np.ones_like(field)
-        field_mean = np.sum(field * weight * cond) / np.sum(weight * cond)
+        field, weight = self.get_field_input(field), self.get_field_input(weight)
+        field_mean = np.sum(field * weight) / np.sum(weight)
         return field_mean
 
-    def sum(self, field, cond):
+    def sum(self, field, weight=None):
         ''' Return the sum value of a field. '''
-        field, cond = self.get_field_input(field), self.get_field_input(cond)
-        if np.all(cond) == None: cond = np.ones_like(field)
         if np.all(weight) == None: weight = np.ones_like(field)
-        field_sum = np.sum(field * cond)
+        field, weight = self.get_field_input(field), self.get_field_input(weight)
+        field_sum = np.sum(field * weight)
         return field_sum
     
     @cached_property
@@ -409,7 +404,7 @@ class Sim(object):
     @cached_property
     def c_s(self):
         ''' Sound speed '''
-        return np.sqrt(self.gamma * self.pressure / self.density)
+        return np.sqrt(self.pressure / self.density)
     
     @cached_property
     def mach(self):
@@ -441,7 +436,7 @@ class Sim(object):
     @cached_property
     def eps_sf(self):
         ''' Star formation efficiency. '''
-        return calc_eps_sf(self.density, self.energy_turb, self.temp, self.dx_local, self.b_turb, self.gamma)
+        return calc_eps_sf(self.density, self.energy_turb, self.temp, self.dx_local, self.b_turb)
 
     @cached_property
     def t_ff(self):
@@ -456,5 +451,5 @@ class Sim(object):
     @cached_property
     def entropy(self):
         ''' Entropy. '''
-        return self.pressure / self.density**self.gamma
+        return self.pressure / self.density
 
