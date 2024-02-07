@@ -338,8 +338,8 @@ class Sim(object):
         color: color of the annotation
         '''
         if size_img == None: size_img = self.box_size
-        ax.plot([-0.9*size_img/unit/2, (-0.9*size_img/2 + dis)/unit], [0.9*size_img/unit/2, 0.9*size_img/unit/2], color='white', lw=3)
-        ax.annotate('%.3g %s' % (dis/unit, label_unit), ((-0.9*size_img + dis)/unit/2, 0.85*size_img/2/unit), color='white', horizontalalignment='center', verticalalignment='top', fontsize=14)
+        ax.plot([-0.9*size_img/unit/2, (-0.9*size_img/2 + dis)/unit], [0.9*size_img/unit/2, 0.9*size_img/unit/2], lw=3, color=color)
+        ax.annotate('%.3g %s' % (dis/unit, label_unit), ((-0.9*size_img + dis)/unit/2, 0.85*size_img/2/unit), color=color, horizontalalignment='center', verticalalignment='top', fontsize=14)
 
     def mean(self, field, weight=None):
         ''' Return the mean value of a field. '''
