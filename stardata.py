@@ -16,6 +16,8 @@ from functions import get_dump_list, move_to_sim_dir, get_info, aexp_to_proper_t
 from config import BIRTH, DEATH
 import const
 
+from numpy.core._exceptions import UFuncTypeError
+
 # parse command line arguments
 parser = argparse.ArgumentParser(prog='stardata.py', description='Generate histograms of star data.')
 parser.add_argument('round', type=int, help='simulation round')
@@ -170,8 +172,8 @@ if __name__ == '__main__':
 
     # distribute cpus across processes
     ncpu_per_process = int(np.ceil(args.ncpu / size))
-    idx_cpu_min = min(rank * ncpu_per_process, args.ncpu)
-    idx_cpu_max = min((rank + 1) * ncpu_per_process, args.ncpu)
+    idx_cpu_min = min(rank * ncpu_per_process, args.ncpu-1)
+    idx_cpu_max = min((rank+1) * ncpu_per_process, args.ncpu-1)
     if rank == 0: sys.stdout.write("%d CPUs per process\n" % ncpu_per_process)
     
     # create empty histogram list
