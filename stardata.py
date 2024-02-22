@@ -16,8 +16,6 @@ from functions import get_dump_list, move_to_sim_dir, get_info, aexp_to_proper_t
 from config import BIRTH, DEATH
 import const
 
-from numpy.core._exceptions import UFuncTypeError
-
 # parse command line arguments
 parser = argparse.ArgumentParser(prog='stardata.py', description='Generate histograms of star data.')
 parser.add_argument('round', type=int, help='simulation round')
@@ -57,7 +55,8 @@ histparam_list = [
     Hist('mach_turb', 1e-2, 1e3, idx_event=DEATH),
     Hist(['alpha_vir', 'mach_turb'], [1e0, 1e-1], [1e5, 1e3], dim=2, weight='mass'),
     Hist(['alpha_vir', 'mach_turb'], [1e0, 1e-1], [1e5, 1e3], dim=2, idx_event=DEATH),
-    Hist('density_mff', 1e-20, 1e-10, weight='mass', nbin=128),
+    Hist('density_mff', 1e-20, 1e-10, do_trunc=True, weight='mass', nbin=128, name='density_mff_trunc', binname='density_mff_trunc'),
+    Hist('density_mff', 1e-25, 1e-15, do_trunc=False, weight='mass', nbin=128),
     Hist(['density', 'eps_sf'], [1e-22, 1e-4], [1e-18, 1e1], dim=2, weight='mass'),
     Hist(['time', 'eps_sf'], [0, 1e-4], [550*const.Myr, 1e1], dim=2, weight='mass', do_log=[False, True], nbin=[550, 512])
 ]
@@ -72,19 +71,16 @@ def calc_hist_density_mff(stardata, histparam):
     bin_edge = 10**np.linspace(np.log10(histparam.vmin_list[0]), np.log10(histparam.vmax_list[0]), histparam.nbin_list[0]+1)
     hist = np.zeros(histparam.nbin_list[0])
     
-    aexp = proper_time_to_aexp_interp(stardata['time'])
-    dx = aexp * boxlen / 2**stardata['level']
     b_turb = stardata['b_turb'] if args.bturb == 0. else args.bturb
-    c_s = np.sqrt(const.k_B * stardata['temp'] / const.m_p) # sound speed
-    mach_turb = np.sqrt(2/3 * stardata['energy_turb']) / c_s # turbulent Mach number
-    alpha_vir = 15 / np.pi * c_s**2 * (1 + mach_turb**2) / (const.G * stardata['density'] * dx**2) # virial parameter
-    s_crit = np.log(alpha_vir * (1 + 2 * mach_turb**4 / (1 + mach_turb**2))) # lognormal critical density for star formation
-    sigma_s = np.sqrt(np.log(1 + b_turb**2 * mach_turb**2)) # standard deviation of the lognormal subgrid density distribution
+    s_crit = np.log(stardata['alpha_vir'] * (1 + 2 * stardata['mach_turb']**4 / (1 + stardata['mach_turb']**2))) # lognormal critical density for star formation
+    sigma_s = np.sqrt(np.log(1 + b_turb**2 * stardata['mach_turb']**2)) # standard deviation of the lognormal subgrid density distribution
     
     for i in range(histparam.nbin_list[0]):
-        s_bin_min = np.maximum(np.log(bin_edge[i]) - np.log(stardata['density']), s_crit)
-        s_bin_max = np.maximum(np.log(bin_edge[i+1]) - np.log(stardata['density']), s_crit)
-        hist_per_part = (erf_wrapper(s_bin_min, sigma_s) - erf_wrapper(s_bin_max, sigma_s)) / (1. + erf_wrapper(s_crit, sigma_s))
+        s_bin_min = np.log(bin_edge[i]) - np.log(stardata['density'])
+        s_bin_max = np.log(bin_edge[i+1]) - np.log(stardata['density'])
+        if histparam.do_trunc: s_bin_min, s_bin_max = np.maximum(s_bin_min, s_crit), np.maximum(s_bin_max, s_crit)
+        hist_per_part = erf_wrapper(s_bin_min, sigma_s) - erf_wrapper(s_bin_max, sigma_s)
+        if histparam.do_trunc: hist_per_part /= 1. + erf_wrapper(s_crit, sigma_s)
         hist_per_part = np.nan_to_num(hist_per_part)
         hist[i] = np.sum(stardata['mass'] * hist_per_part)
     return hist
@@ -147,7 +143,7 @@ def read_starcat_1cpu(idx_cpu):
         
         # calculate histograms
         for i, histparam in enumerate(histparam_list):
-            if histparam.name == 'density_mff':
+            if histparam.name in ['density_mff', 'density_mff_trunc']:
                 hist_list_1cpu[i] += calc_hist_density_mff(stardata, histparam)
             else:
                 hist_list_1cpu[i] += histparam.calc_hist(stardata)
@@ -164,7 +160,6 @@ if __name__ == '__main__':
     size = comm.Get_size()
     rank = comm.Get_rank()
     name = MPI.Get_processor_name()
-    sys.stdout.write("Process %d of %d running on %s.\n" % (rank, size, name))
 
     # move to simulation directory
     move_to_sim_dir(args.round, args.name, do_print=(rank == 0))
@@ -174,7 +169,7 @@ if __name__ == '__main__':
     ncpu_per_process = int(np.ceil(args.ncpu / size))
     idx_cpu_min = min(rank * ncpu_per_process, args.ncpu-1)
     idx_cpu_max = min((rank+1) * ncpu_per_process, args.ncpu-1)
-    if rank == 0: sys.stdout.write("%d CPUs per process\n" % ncpu_per_process)
+    sys.stdout.write("Process %d of %d running on %s assigned CPUs %d-%d\n" % (rank, size, name, idx_cpu_min, idx_cpu_max))
     
     # create empty histogram list
     hist_list_1p = [np.zeros(histparam.nbin_list) for histparam in histparam_list]

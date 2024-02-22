@@ -64,6 +64,7 @@ def make_frame(data, extent, cmap=None, vmin=None, vmax=None, cbar_step=None, cb
     if do_SFR_plot:
         ax2.plot(time1d, SFR1d/(const.M_sol/const.yr))
         ax2.axvline(x=time, lw=2, color='red')
+        ax2.set_xticks([])
         plt.setp(ax2.get_xticklabels(), visible=False)
 
     # create axes labels and title
@@ -133,25 +134,3 @@ if __name__ == '__main__':
 
     # wait for all frames
     comm.Barrier()
-    
-    if rank == 0:
-        
-        sys.stdout.write(os.listdir(img_dir))
-        
-        # make the movie
-        sys.stdout.write('Creating movie\n')
-        mapfile_name = os.path.join(img_dir, "img-%05d.png")
-        movie_name = os.path.join("..", "%s-proj%d.mp4" % (var, idx_proj+1))
-        process = (
-            ffmpeg
-            .input(mapfile_name)
-            .filter('pad', 'ceil(iw/2)*2', 'ceil(ih/2)*2') # required to prevent error for odd pxl img size
-            .output(movie_name, vcodec='libx264', pix_fmt='yuv420p', r=framerate)
-            .overwrite_output()
-            .run_async(pipe_stdin=True)
-        )
-
-        # clean up
-        sys.stdout.write('Cleaning up\n')
-        os.system("rm -r %s" % img_dir)
-        sys.stdout.write('Done\n')

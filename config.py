@@ -40,11 +40,15 @@ sim_name_to_latex = {
     "tempfixedcut": "Fixed sound speed with cutoff",
     "bturbfunc_jeans": r"Variable $b_{\rm turb}$ with Jeans refine",
     "mstar0p2": r"$m_* = 0.2$",
+    "mstar1p0": r"$m_* = 1.0$",
     "mstar5p0": r"$m_* = 5.0$",
+    "mstar0p2cut0p1": r"$m_* = 0.2$, $\varepsilon_{\rm SF} > 0.1$",
     "mstar0p2cut0p01": r"$m_* = 0.2$, $\varepsilon_{\rm SF} > 0.01$",
+    "mstar0p2cutphot": r"$m_* = 0.2$, $T < T_{\rm phot}$",
     "eps0p2": r"$\varepsilon_{\rm SF, loc} = 0.2$",
     "eps5p0": r"$\varepsilon_{\rm SF, loc} = 5.0$",
-    "instantfeedback": r"$t_{\rm fbk} = 0.0~{\rm Myr}$"
+    "instantfeedback": r"$t_{\rm fbk} = 0.0~{\rm Myr}$",
+    "epscut": r"$\varepsilon_{\rm SF} > 13$%"
 }
 
 defaults = {

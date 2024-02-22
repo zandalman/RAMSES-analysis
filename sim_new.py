@@ -228,7 +228,7 @@ class Sim(object):
         img = field[tuple(idx_pxl)]
         return vec_coord1, vec_coord2, img
     
-    def proj_axis(self, field, size_img=None, size_sample=None, idx_axis=Z, coord_center=np.array([0, 0, 0]), weight=None):
+    def proj_axis(self, field, size_img=None, size_sample=None, idx_axis=Z, coord_center=np.array([0, 0, 0]), weight=None, do_avg=True):
         '''
         Project a field along a grid axis.
         
@@ -259,7 +259,8 @@ class Sim(object):
         
         field = field.take(np.arange(idx_back, idx_for), axis=idx_axis)
         field_weighted = field_weighted.take(np.arange(idx_back, idx_for), axis=idx_axis)
-        img = (np.sum(field_weighted, axis=idx_axis) / np.sum(weight, axis=idx_axis))[idx_left:idx_right, idx_bottom:idx_top]
+        img = np.sum(field_weighted, axis=idx_axis)[idx_left:idx_right, idx_bottom:idx_top]
+        if do_avg: img /= np.sum(weight, axis=idx_axis)[idx_left:idx_right, idx_bottom:idx_top]
         return img
         
     def proj_anyaxis(self, field, size_img=None, size_sample=None, vec_camera=np.array([0, 0, 1]), vec_north=np.array([0, 1, 0]), coord_center=np.array([0, 0, 0]), num_pxl=128, num_sample=10000, weight=None):
