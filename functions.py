@@ -282,6 +282,54 @@ def vec_conv(field, coord, sys1, sys2):
         field_new[PH] = field[PH2]
     return field_new
 
+def slog10(x):
+    ''' Safe log10 for arrays containing zeros. '''
+    small_number = const.small * np.min(np.ma.masked_equal(x, 0.0, copy=False))
+    return np.log10(x + small_number)
+
+def erf_wrapper(s, sigma_s):
+    return erf((sigma_s**2 - s) / (np.sqrt(2) * sigma_s))
+
+def calc_hist_density_mff(vmin, vmax, nbin, density, mach_turb, alpha_vir, b_turb=1.0, weight=None, do_trunc=False):
+    '''
+    Compute the density histogram on the sonic scale.
+
+    Args
+    vmin, vmax: minimum and maximum density values
+    nbin: number of bins
+    density: density array
+    mach_turb: turbulent Mach number array
+    alpha_vir: virial parameter array
+    b_turb: turbulence forcing parameter
+    weight: weight array
+    do_trunc: truncate the subgrid PDF below the critical density
+
+    Returns
+    density1d: density bin center array
+    hist: sonic scale density histogram array
+    '''
+    if np.all(weight) == None: weight = np.ones_like(density)
+    density, mach_turb, alpha_vir, weight = density.flatten(), mach_turb.flatten(), alpha_vir.flatten(), weight.flatten()
+    if type(b_turb) != float: b_turb = b_turb.flatten()
+    bin_edge = 10**np.linspace(np.log10(vmin), np.log10(vmax), nbin+1)
+    bin_width = np.log10(bin_edge[1]/bin_edge[0])
+    density1d = 10**(np.log10(bin_edge[:-1]) + bin_width/2)
+    hist = np.zeros(nbin)
+    
+    s_crit = np.log(alpha_vir * (1 + 2 * mach_turb**4 / (1 + mach_turb**2))) # lognormal critical density for star formation
+    sigma_s = np.sqrt(np.log(1 + b_turb**2 * mach_turb**2)) # standard deviation of the lognormal subgrid density distribution
+    
+    for i in range(nbin):
+        s_bin_min = np.log(bin_edge[i]) - np.log(density)
+        s_bin_max = np.log(bin_edge[i+1]) - np.log(density)
+        if do_trunc: s_bin_min, s_bin_max = np.maximum(s_bin_min, s_crit), np.maximum(s_bin_max, s_crit)
+        hist_per_part = erf_wrapper(s_bin_min, sigma_s) - erf_wrapper(s_bin_max, sigma_s)
+        if do_trunc: hist_per_part /= (0.5 + erf_wrapper(s_crit, sigma_s)/2)
+        hist_per_part = np.nan_to_num(hist_per_part)
+        hist[i] = np.sum(weight * hist_per_part)
+    hist /= bin_width
+    return density1d, hist
+
 def get_var_list(dim, var, default=None):
     
     if isinstance(default, Iterable) and not isinstance(default, str):
@@ -332,173 +380,103 @@ class Hist(object):
         self.histname = name_str_prepend + "_hist" + name_str_append
         self.pdfname = name_str_prepend + "_pdf" + name_str_append
 
-        self.bin_width_list, self.bin_center_list = [], []
+        self.bin_width_list, self.bin_center_list = []*self.dim, []*self.dim
         for i in range(self.dim):
             if self.do_log_list[i]:
-                self.bin_width_list.append((np.log10(self.vmax_list[i]) - np.log10(self.vmin_list[i])) / self.nbin_list[i])
+                self.bin_width_list.append((np.log10(self.vmax_list[i]/self.vmin_list[i])) / self.nbin_list[i])
                 self.bin_center_list.append(10**(np.linspace(np.log10(self.vmin_list[i]), np.log10(self.vmax_list[i]), self.nbin_list[i]+1) + self.bin_width_list[i]/2)[:-1])
             else:
                 self.bin_width_list.append((self.vmax_list[i] - self.vmin_list[i]) / self.nbin_list[i])
                 self.bin_center_list.append((np.linspace(self.vmin_list[i], self.vmax_list[i], self.nbin_list[i]+1) + self.bin_width_list[i]/2)[:-1])
 
     def calc_hist(self, stardata):
-        field_list, range_list = [], []
-        if np.sum(stardata['event']==self.idx_event) == 0: 
+        cond_event = stardata['event']==self.idx_event
+        if np.sum(cond_event) == 0: 
             hist = np.zeros(self.nbin_list)
         else:
-            for i in range(self.dim):
-                field = stardata[self.field_list[i]][stardata['event']==self.idx_event]
-                if self.do_log_list[i] == True:
-                    small_number = const.small * np.mean(field)
-                    field_list.append(np.log10(field + small_number))
-                    range_list.append((np.log10(self.vmin_list[i]), np.log10(self.vmax_list[i])))
-                else:
-                    field_list.append(field)
-                    range_list.append((self.vmin_list[i], self.vmax_list[i]))
-            args_histdd = {
-                'sample': np.array(field_list).T,
-                'bins': self.nbin_list,
-                'range': range_list,
-                'weights': np.ones(np.sum(stardata['event']==self.idx_event)) if self.weight == None else stardata[self.weight][stardata['event']==self.idx_event]
-            }
-            hist, _ = np.histogramdd(**args_histdd)
+            field_list = [stardata[field_name][cond_event] for field_name in self.field_list]
+            range_list = list(zip(self.vmin_list, self.vmax_list))
+            weight = np.ones_like(field_list[0]) if self.weight==None else stardata[self.weight][cond_event]
+            _, hist = calc_hist(field_list, range_list, self.nbin_list, self.do_log_list, weight=weight)
         return hist
     
-    def calc_pdf(self, hist):
-        return hist / np.sum(hist) / np.prod(self.bin_width_list)
-
-def calc_hist(field, vmin=None, vmax=None, weight=None, nbin=256, do_log=True, do_norm=False):
+def calc_hist(field_list, range_list, nbin_list, do_log_list, weight=None, do_binnorm=True, do_pdf=False):
     '''
-    Compute the histogram of a field.
+    Compute a histogram.
 
-    Args
-    field: field
-    vmin, vmax (float): min and max field values
-    weight: weight
-    nbin (int): number of bins
-    do_log (bool): use the log of the field
-    do_norm (bool): normalize the histogram i.e. generate a PDF
+    field_list: list of fields
+    range_list: list of field ranges
+    nbin_list: list of bin numbers
+    do_log_list: list of whether to take the log
+    weight: histgram weight
+    do_binnorm: normalize by bin volume
+    do_pdf: normalize to unity
 
     Returns
-    field1d: field bin centers
-    hist: histogram of the field
+    bin_list: list of histogram bins
+    hist: histogram
     '''
+    assert len(field_list) == len(range_list), 'Field list and range list must have same length.'
+    dim = len(field_list) # get number of dimension
+    for i in range(dim): field_list[i] = field_list[i].flatten() # flatten fields
+    if np.all(weight) == None: weight = np.ones_like(field_list[0]) # get histogram weight
+    weight = weight.flatten()
+    idx_do_log = np.where(do_log_list)[0]
+    for i in idx_do_log:
+        field_list[i] = slog10(field_list[i]) # take the log of the field
+        range_list[i] = (np.log10(range_list[i][0]), np.log10(range_list[i][1])) # take the log of the field range
+    hist, bin_list = np.histogramdd(np.array(field_list).T, bins=nbin_list, range=range_list, weights=weight)
+    bin_width_list = [bin[1]-bin[0] for bin in bin_list] # get bin widths
+    for i in range(len(bin_list)): bin_list[i] = bin_list[i][:-1] + bin_width_list[i]/2 # compute bin centers from bin edges
+    for i in idx_do_log: bin_list[i] = 10**bin_list[i]
+    if do_binnorm: hist /= np.prod(bin_width_list)
+    if do_pdf: hist /= np.sum(hist)
+    return bin_list, hist
+
+def calc_hist1d(field, vmin=None, vmax=None, nbin=256, weight=None, do_log=True, do_binnorm=True, do_pdf=False):
+    ''' 1-dimensional wrapper for the function calc_hist(). '''
     if vmin == None: vmin = np.min(field)
-    if vmax == None: vmax = np.max(field)
+    if vmax == None: vmin = np.max(field)
+    bin_list, hist = calc_hist([field], [(vmin, vmax)], [nbin], [do_log], weight=weight, do_binnorm=do_binnorm, do_pdf=do_pdf)
+    return bin_list[0], hist
+
+def calc_profile1d(coord, field, vmin=None, vmax=None, nbin=256, weight=None, do_log=True, do_cum=False):
+    ''' Compute the profile of a field with respect to a coordinate. '''
     if np.all(weight) == None: weight = np.ones_like(field)
-    if do_log: field, vmin, vmax = np.log10(field), np.log10(vmin), np.log10(vmax)
-    hist, bin_edge = np.histogram(field.flatten(), weights=weight.flatten(), bins=nbin, range=(vmin, vmax))
-    bin_width = np.diff(bin_edge)[0]
-    field1d = bin_edge[:-1] + bin_width/2
-    if do_log: field1d = 10**field1d
-    if do_norm: hist /= (np.sum(weight) * bin_width)
-    return field1d, hist
-
-def calc_profile1d(coord, field, vmin=None, vmax=None, weight=None, nbin=256, do_log=True, do_cum=False):
-    '''
-    Compute a 1d profile of field with respect to a coordinate.
-
-    Args
-    coord: coordinate
-    field: field
-    vmin, vmax (float): min and max field values
-    weight: weight
-    nbin (int): n umber of bins
-    do_log (bool): use the log of the field
-    do_cum (bool): cumulative 1d profile
-
-    Returns
-    coord1d: coord bin centers
-    field1d: 1d profile of field with respect to coordinate
-    '''
-    if vmin == None: vmin = np.min(coord)
-    if vmax == None: vmax = np.max(coord)
-    if np.all(weight) == None: weight = np.ones_like(field)
-    coord1d, weighted_field1d = calc_hist(coord, vmin=vmin, vmax=vmax, weight=(field * weight), nbin=nbin, do_log=do_log, do_norm=False)
-    coord1d, weight1d = calc_hist(coord, vmin=vmin, vmax=vmax, weight=weight, nbin=nbin, do_log=do_log, do_norm=False)
-    if do_cum:
-        field1d = np.cumsum(weighted_field1d) / np.cumsum(weight1d)
-    else:
-        field1d = weighted_field1d / weight1d
+    coord1d, weighted_field1d = calc_hist1d(coord, vmin, vmax, nbin, weight=(field * weight), do_log=do_log, do_binnorm=False)
+    coord1d, weight1d = calc_hist(coord, vmin, vmax, nbin, weight=weight, do_log=do_log, do_binnorm=False)
+    field1d = np.cumsum(weighted_field1d) / np.cumsum(weight1d) if do_cum else weighted_field1d / weight1d
     return coord1d, field1d
 
-def calc_hist2d(field1, field2, vmin1=None, vmax1=None, vmin2=None, vmax2=None, weight=None, nbin=30, do_log1=True, do_log2=True, do_norm=False):
-    '''
-    Compute distribution of a quantity in a two-dimensional phase space.
-
-    Args
-    field1, field2: fields
-    vmin1, vmax1, vmin2, vmax2 (float): min and max field values
-    weight: weight for the bins
-    nbin (int): number of bins
-    do_log1, do_log2 (bool): use the log of the field
-    do_norm (bool): normalize the histogram i.e. generate a pdf
-
-    Returns
-    field12d, field22d: field bin centers
-    hist2d: 2d histogram
-    '''
+def calc_hist2d(field1, field2, vmin1=None, vmax1=None, vmin2=None, vmax2=None, nbin=128, weight=None, do_log1=True, do_log2=True, do_binnorm=True, do_pdf=False):
+    ''' 2-dimensional wrapper for the function calc_hist(). '''
     if vmin1 == None: vmin1 = np.min(field1)
     if vmax1 == None: vmax1 = np.max(field1)
-    if vmin2 == None: vmin2 = np.min(field2)
-    if vmax2 == None: vmax2 = np.max(field2)
-    if np.all(weight) == None: weight = np.ones_like(field1)
-    if do_log1: field1, vmin1, vmax1 = np.log10(field1), np.log10(vmin1), np.log10(vmax1)
-    if do_log2: field2, vmin2, vmax2 = np.log10(field2), np.log10(vmin2), np.log10(vmax2)
-    hist2d, xbin_edge, ybin_edge = np.histogram2d(field1.flatten(), field2.flatten(), weights=weight.flatten(), bins=(nbin, nbin), range=[(vmin1, vmax1), (vmin2, vmax2)])
-    xbin_width, ybin_width = np.diff(xbin_edge)[0], np.diff(ybin_edge)[0]
-    field12d = xbin_edge[:-1] + xbin_width/2
-    field22d = ybin_edge[:-1] + ybin_width/2
-    if do_log1: field12d = 10**field12d
-    if do_log2: field22d = 10**field22d
-    hist2d = hist2d.T
-    if do_norm: hist2d /= (np.sum(weight) * xbin_width * ybin_width)
-    return field12d, field22d, hist2d
+    if vmin2 == None: vmin1 = np.min(field2)
+    if vmax2 == None: vmax1 = np.max(field2)
+    bin_list, hist = calc_hist([field1, field2], [(vmin1, vmax1), (vmin2, vmax2)], [nbin, nbin], [do_log1, do_log2], weight=weight, do_binnorm=do_binnorm, do_pdf=do_pdf)
+    return bin_list[0], bin_list[1], hist
 
-def plot_pdf2d(field1, field2, vmin1=None, vmax1=None, vmin2=None, vmax2=None, vmin3=None, vmax3=None, weight=None, nbin=30, do_log1=True, do_log2=True, do_log3=True, fig=None):
-    '''
-    Compute distribution of a quantity in a two-dimensional phase space.
-
-    Args
-    field1, field2: fields
-    vmin1, vmax1, vmin2, vmax2, vmin3, vmax3 (float): min and max field values
-    weight: weight for the bins
-    nbin (int): number of bins
-    do_log1, do_log2, do_log3 (bool): use the log of the field
-    fig: figure object
-
-    Returns
-    axs: figure axes
-    field12d, field2d: field bin centers
-    pdf2d: 2d PDF
-    im: image object
-    '''
+def plot_hist2d(bin1, bin2, hist, vmin=None, vmax=None, do_log1=True, do_log2=True, do_loghist=True):
+    ''' Plot a 2d histogram with marginalized histograms. '''
+    if vmin == None: vmin = np.min(hist)
+    if vmax == None: vmin = np.max(hist)
     if fig == None: fig = plt.figure(figsize=(4, 4))
-    
     ax1 = fig.add_axes([0, 0, 1, 1])
-    field12d, field22d, pdf2d = calc_hist2d(field1, field2, vmin1=vmin1, vmax1=vmax1, vmin2=vmin2, vmax2=vmax2, weight=weight, nbin=nbin, do_log1=do_log1, do_log2=do_log2, do_norm=True)
-    if vmin3 == None: vmin3 == np.min(pdf2d[pdf2d > 0])
-    if vmax3 == None: vmax3 == np.max(pdf2d[pdf2d > 0])
-    if do_log3: pdf2d, vmin3, vmax3 = np.log10(pdf2d + const.small), np.log10(vmin3), np.log10(vmax3)
-    im = ax1.pcolormesh(field12d, field22d, pdf2d, vmin=vmin3, vmax=vmax3)
+    if do_loghist: hist, vmin, vmax = slog10(hist), np.log10(vmin), np.log10(vmax)
+    im = ax1.pcolormesh(bin1, bin2, hist, vmin=vmin, vmax=vmax)
     if do_log1: ax1.set_xscale('log')
     if do_log2: ax1.set_yscale('log')
-    
     ax2 = fig.add_axes([0, 1, 1, 0.3], sharex=ax1)
     plt.setp(ax2.get_xticklabels(), visible=False)
-    field11d, pdf11d = calc_hist(field1, vmin=vmin1, vmax=vmax1, weight=weight, nbin=nbin, do_log=do_log1, do_norm=True)
-    ax2.plot(field11d, pdf11d, lw=2)
-    
+    pdf1 = np.sum(hist, axis=1) / np.sum(hist)
+    ax2.plot(bin1, pdf1, lw=2)
     ax3 = fig.add_axes([1, 0, 0.3, 1], sharey=ax1)
     plt.setp(ax3.get_yticklabels(), visible=False)
-    field21d, pdf21d = calc_hist(field2, vmin=vmin2, vmax=vmax2, weight=weight, nbin=nbin, do_log=do_log2, do_norm=True)    
-    ax3.plot(pdf21d, field21d, lw=2)
-
+    pdf2 = np.sum(hist, axis=0) / np.sum(hist) 
+    ax3.plot(pdf2, bin2, lw=2)
     axs = [ax1, ax2, ax3]
-    if do_log3: pdf2d = 10**(pdf2d) - const.small
-
-    return axs, field12d, field22d, pdf2d, im
-
+    return axs, im
 
 def get_biggest_halo_coord_cubic(aexp):
     ''' Estimate the coordinates of the biggest halo using a cubic fit to each coordinate. '''

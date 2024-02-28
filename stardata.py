@@ -12,7 +12,7 @@ from scipy.interpolate import interp1d
 from scipy.special import erf
 
 # import custom functions
-from functions import get_dump_list, move_to_sim_dir, get_info, aexp_to_proper_time, get_numline, calc_eps_sf2, Hist
+from functions import get_dump_list, move_to_sim_dir, get_info, aexp_to_proper_time, get_numline, calc_eps_sf2, Hist, calc_hist_density_mff
 from config import BIRTH, DEATH
 import const
 
@@ -62,29 +62,6 @@ histparam_list = [
 ]
 num_hist = len(histparam_list)
 
-# functions for derived quantities
-def erf_wrapper(s, sigma_s):
-    return erf((sigma_s**2 - s) / (np.sqrt(2) * sigma_s))
-
-def calc_hist_density_mff(stardata, histparam):
-    
-    bin_edge = 10**np.linspace(np.log10(histparam.vmin_list[0]), np.log10(histparam.vmax_list[0]), histparam.nbin_list[0]+1)
-    hist = np.zeros(histparam.nbin_list[0])
-    
-    b_turb = stardata['b_turb'] if args.bturb == 0. else args.bturb
-    s_crit = np.log(stardata['alpha_vir'] * (1 + 2 * stardata['mach_turb']**4 / (1 + stardata['mach_turb']**2))) # lognormal critical density for star formation
-    sigma_s = np.sqrt(np.log(1 + b_turb**2 * stardata['mach_turb']**2)) # standard deviation of the lognormal subgrid density distribution
-    
-    for i in range(histparam.nbin_list[0]):
-        s_bin_min = np.log(bin_edge[i]) - np.log(stardata['density'])
-        s_bin_max = np.log(bin_edge[i+1]) - np.log(stardata['density'])
-        if histparam.do_trunc: s_bin_min, s_bin_max = np.maximum(s_bin_min, s_crit), np.maximum(s_bin_max, s_crit)
-        hist_per_part = erf_wrapper(s_bin_min, sigma_s) - erf_wrapper(s_bin_max, sigma_s)
-        if histparam.do_trunc: hist_per_part /= 1. + erf_wrapper(s_crit, sigma_s)
-        hist_per_part = np.nan_to_num(hist_per_part)
-        hist[i] = np.sum(stardata['mass'] * hist_per_part)
-    return hist
-
 # list of columns in star logs
 col_name_list = np.array(["event", "id", "level", "mass", "x_star", "y_star", "z_star", "velx_star", "vely_star", "velz_star", "density", "velx", "vely", "velz", "temp", "metallicity", "energy_turb", "mask", "b_turb", "tag", "time"])
 col_unit_list = np.array(["dimless", "dimless", "dimless", "mass", "length", "length", "length", "vel", "vel", "vel", "density", "vel", "vel", "vel", "dimless", "dimless", "spec_energy", "dimless", "dimless", "dimless", "dimless"])
@@ -110,8 +87,7 @@ def read_starcat_1cpu(idx_cpu):
         if get_numline(filename) <= 1: continue # skip if star log file is empty
         
         # read the star log
-        with open(filename, "r") as f:
-            stardata_tab = ascii.read(filename, names=col_name_list, data_start=1)
+        stardata_tab = ascii.read(filename, names=col_name_list, data_start=1)
         
         # preprocess star log data
         stardata = {}
@@ -144,7 +120,8 @@ def read_starcat_1cpu(idx_cpu):
         # calculate histograms
         for i, histparam in enumerate(histparam_list):
             if histparam.name in ['density_mff', 'density_mff_trunc']:
-                hist_list_1cpu[i] += calc_hist_density_mff(stardata, histparam)
+                _, hist_1file = calc_hist_density_mff(histparam.vmin_list[0], histparam.vmax_list[0], histparam.nbin_list[0], stardata['density'], stardata['mach_turb'], stardata['alpha_vir'], b_turb, stardata['mass'], do_trunc=histparam.do_trunc)
+                hist_list_1cpu[i] += hist_1file
             else:
                 hist_list_1cpu[i] += histparam.calc_hist(stardata)
 
@@ -201,7 +178,7 @@ if __name__ == '__main__':
         hist_dict = {}
         for i, histparam in enumerate(histparam_list):
             hist_dict[histparam.histname] = hist_list[i]
-            hist_dict[histparam.pdfname] = histparam.calc_pdf(hist_list[i])
+            hist_dict[histparam.pdfname] = hist_list[i] / np.sum(hist_list[i])
             for i in range(histparam.dim):
                 hist_dict[histparam.binname_list[i]] = histparam.bin_center_list[i]
 

@@ -3,7 +3,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=96
 #SBATCH --cpus-per-task=1
-#SBATCH --time=00:30:00
+#SBATCH --time=00:20:00
 #SBATCH --output=/home/za9132/analysis/stardata_log/slurm-%j.out
 #SBATCH --error=/home/za9132/analysis/stardata_log/slurm-%j.out
 
