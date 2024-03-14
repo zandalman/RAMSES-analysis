@@ -43,7 +43,7 @@ histparam_list = [
     Hist('metallicity', 1e-3*const.Z_sol, 1e1*const.Z_sol, idx_event=DEATH),
     Hist('energy_turb', 1e11, 1e16, weight='mass'),
     Hist('energy_turb', 1e11, 1e16, idx_event=DEATH),
-    Hist('density', 1e-22, 1e-18, weight='mass'),
+    Hist('density', 1e-25, 1e-10, weight='mass'),
     Hist('density', 1e-27, 1e-18, idx_event=DEATH),
     Hist('temp', 1e1, 1e4, weight='mass'),
     Hist('temp', 1e1, 1e9, idx_event=DEATH),
@@ -55,10 +55,14 @@ histparam_list = [
     Hist('mach_turb', 1e-2, 1e3, idx_event=DEATH),
     Hist(['alpha_vir', 'mach_turb'], [1e0, 1e-1], [1e5, 1e3], dim=2, weight='mass'),
     Hist(['alpha_vir', 'mach_turb'], [1e0, 1e-1], [1e5, 1e3], dim=2, idx_event=DEATH),
-    Hist('density_mff', 1e-20, 1e-10, do_trunc=True, weight='mass', nbin=128, name='density_mff_trunc', binname='density_mff_trunc'),
-    Hist('density_mff', 1e-25, 1e-15, do_trunc=False, weight='mass', nbin=128),
+    Hist('density_mff', 1e-25, 1e-10, do_trunc=True, weight='mass', nbin=128, name='density_mff_trunc', binname='density_mff_trunc'),
+    Hist('density_mff', 1e-25, 1e-10, do_trunc=False, weight='mass', nbin=128),
     Hist(['density', 'eps_sf'], [1e-22, 1e-4], [1e-18, 1e1], dim=2, weight='mass'),
-    Hist(['time', 'eps_sf'], [0, 1e-4], [550*const.Myr, 1e1], dim=2, weight='mass', do_log=[False, True], nbin=[550, 512])
+    Hist(['time', 'eps_sf'], [0, 1e-4], [550*const.Myr, 1e1], dim=2, weight='mass', do_log=[False, True], nbin=[550, 512]),
+    Hist(['density', 'metallicity'], [1e-22, 1e-3*const.Z_sol], [1e-18, 1e1*const.Z_sol], dim=2, weight='mass'),
+    Hist(['density', 'mach_turb'], [1e-22, 1e-1], [1e-18, 1e3], dim=2, weight='mass'),
+    Hist(['metallicity', 'mach_turb'], [1e-3*const.Z_sol, 1e-1], [1e1*const.Z_sol, 1e3], dim=2, weight='mass'),
+    Hist(['nH', 'ncool'], [1e1, 1e1], [1e6, 1e6], dim=2, weight='mass')
 ]
 num_hist = len(histparam_list)
 
@@ -116,12 +120,13 @@ def read_starcat_1cpu(idx_cpu):
         stardata['alpha_vir'] = 15 / np.pi * c_s**2 * (1 + stardata['mach_turb']**2) / (const.G * stardata['density'] * dx**2) # virial parameter
         b_turb = stardata['b_turb'] if args.bturb == 0. else args.bturb
         stardata['eps_sf'] = calc_eps_sf2(stardata['density'], stardata['energy_turb'], stardata['temp'], dx, b_turb=b_turb, eps_sf_loc=args.epssfloc)
-        
+        stardata['nH'] = const.X_cosmo*stardata['density']/const.m_H
+        stardata['ncool'] = 3.4e3 * (stardata['metallicity']/const.Z_sol)**(-2) * (stardata['temp']/1e4)**2
+
         # calculate histograms
         for i, histparam in enumerate(histparam_list):
             if histparam.name in ['density_mff', 'density_mff_trunc']:
-                _, hist_1file = calc_hist_density_mff(histparam.vmin_list[0], histparam.vmax_list[0], histparam.nbin_list[0], stardata['density'], stardata['mach_turb'], stardata['alpha_vir'], b_turb, stardata['mass'], do_trunc=histparam.do_trunc)
-                hist_list_1cpu[i] += hist_1file
+                hist_list_1cpu[i] += histparam.calc_hist_density_mff(stardata, args.bturb)
             else:
                 hist_list_1cpu[i] += histparam.calc_hist(stardata)
 
@@ -178,7 +183,7 @@ if __name__ == '__main__':
         hist_dict = {}
         for i, histparam in enumerate(histparam_list):
             hist_dict[histparam.histname] = hist_list[i]
-            hist_dict[histparam.pdfname] = hist_list[i] / np.sum(hist_list[i])
+            hist_dict[histparam.pdfname] = hist_list[i] / (np.sum(hist_list[i]) * np.prod(histparam.bin_width_list))
             for i in range(histparam.dim):
                 hist_dict[histparam.binname_list[i]] = histparam.bin_center_list[i]
 

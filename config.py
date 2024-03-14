@@ -54,5 +54,7 @@ sim_name_to_latex = {
     "eps0p2": r"$\varepsilon_{\rm SF, loc} = 0.2$",
     "eps5p0": r"$\varepsilon_{\rm SF, loc} = 5.0$",
     "instantfeedback": r"$t_{\rm fbk} = 0.0~{\rm Myr}$",
-    "epscut": r"$\varepsilon_{\rm SF} > 13$%"
+    "epscut": r"$\varepsilon_{\rm SF} > 13$%",
+    "nophot": "no photoionization",
+    "nofeed": "no feedback",
 }

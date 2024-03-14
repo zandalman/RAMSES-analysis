@@ -8,6 +8,7 @@ from matplotlib.lines import Line2D
 from scipy.integrate import quad
 from scipy.optimize import fsolve
 from scipy.special import erf
+from scipy.spatial import cKDTree
 import const
 from collections.abc import Iterable
 from config import *
@@ -400,6 +401,15 @@ class Hist(object):
             _, hist = calc_hist(field_list, range_list, self.nbin_list, self.do_log_list, weight=weight)
         return hist
     
+    def calc_hist_density_mff(self, stardata, b_turb):
+        cond_event = stardata['event']==self.idx_event
+        b_turb = stardata['b_turb'][cond_event] if b_turb == 0. else b_turb
+        if np.sum(cond_event) == 0: 
+            hist = np.zeros(self.nbin_list)
+        else:
+            _, hist = calc_hist_density_mff(self.vmin_list[0], self.vmax_list[0], self.nbin_list[0], stardata['density'][cond_event], stardata['mach_turb'][cond_event], stardata['alpha_vir'][cond_event], b_turb, weight=stardata['mass'][cond_event], do_trunc=self.do_trunc)
+        return hist
+    
 def calc_hist(field_list, range_list, nbin_list, do_log_list, weight=None, do_binnorm=True, do_pdf=False):
     '''
     Compute a histogram.
@@ -429,8 +439,8 @@ def calc_hist(field_list, range_list, nbin_list, do_log_list, weight=None, do_bi
     bin_width_list = [bin[1]-bin[0] for bin in bin_list] # get bin widths
     for i in range(len(bin_list)): bin_list[i] = bin_list[i][:-1] + bin_width_list[i]/2 # compute bin centers from bin edges
     for i in idx_do_log: bin_list[i] = 10**bin_list[i]
-    if do_binnorm: hist /= np.prod(bin_width_list)
     if do_pdf: hist /= np.sum(hist)
+    if do_binnorm: hist /= np.prod(bin_width_list)
     return bin_list, hist
 
 def calc_hist1d(field, vmin=None, vmax=None, nbin=256, weight=None, do_log=True, do_binnorm=True, do_pdf=False):
@@ -457,26 +467,30 @@ def calc_hist2d(field1, field2, vmin1=None, vmax1=None, vmin2=None, vmax2=None, 
     bin_list, hist = calc_hist([field1, field2], [(vmin1, vmax1), (vmin2, vmax2)], [nbin, nbin], [do_log1, do_log2], weight=weight, do_binnorm=do_binnorm, do_pdf=do_pdf)
     return bin_list[0], bin_list[1], hist
 
-def plot_hist2d(bin1, bin2, hist, vmin=None, vmax=None, do_log1=True, do_log2=True, do_loghist=True):
+def plot_hist2d(bin1, bin2, hist, fig=None, vmin=None, vmax=None, do_log1=True, do_log2=True, do_loghist=True, cmap='viridis', do_plot1d=True):
     ''' Plot a 2d histogram with marginalized histograms. '''
     if vmin == None: vmin = np.min(hist)
     if vmax == None: vmin = np.max(hist)
     if fig == None: fig = plt.figure(figsize=(4, 4))
+    bin_width1 = np.log10(bin1[1]/bin1[0]) if do_log1 else bin1[1] - bin1[0]
+    bin_width2 = np.log10(bin2[1]/bin2[0]) if do_log2 else bin2[1] - bin2[0]
     ax1 = fig.add_axes([0, 0, 1, 1])
     if do_loghist: hist, vmin, vmax = slog10(hist), np.log10(vmin), np.log10(vmax)
-    im = ax1.pcolormesh(bin1, bin2, hist, vmin=vmin, vmax=vmax)
+    im = ax1.pcolormesh(bin1, bin2, hist, vmin=vmin, vmax=vmax, cmap=cmap)
     if do_log1: ax1.set_xscale('log')
     if do_log2: ax1.set_yscale('log')
+    if do_loghist: hist = 10**hist
     ax2 = fig.add_axes([0, 1, 1, 0.3], sharex=ax1)
     plt.setp(ax2.get_xticklabels(), visible=False)
-    pdf1 = np.sum(hist, axis=1) / np.sum(hist)
-    ax2.plot(bin1, pdf1, lw=2)
+    pdf1 = np.sum(hist, axis=0) / np.sum(hist) / bin_width1
+    if do_plot1d: ax2.plot(bin1, pdf1, lw=2)
     ax3 = fig.add_axes([1, 0, 0.3, 1], sharey=ax1)
     plt.setp(ax3.get_yticklabels(), visible=False)
-    pdf2 = np.sum(hist, axis=0) / np.sum(hist) 
-    ax3.plot(pdf2, bin2, lw=2)
+    pdf2 = np.sum(hist, axis=1) / np.sum(hist) / bin_width2
+    if do_plot1d: ax3.plot(pdf2, bin2, lw=2)
     axs = [ax1, ax2, ax3]
     return axs, im
+
 
 def get_biggest_halo_coord_cubic(aexp):
     ''' Estimate the coordinates of the biggest halo using a cubic fit to each coordinate. '''
@@ -614,3 +628,93 @@ def downsample_hist(bin_center, hist, fac_ds):
     if hist.size % fac_ds != 0: hist = hist[:-(hist.size%fac_ds)]
     hist_ds = np.sum(hist.reshape(fac_ds, hist.size//fac_ds), axis=0) / fac_ds
     return bin_center_ds, hist_ds
+
+def simloop(sim_list):
+    ''' Loop over simulations for star data plots. '''
+    for i, (sim_round, sim_name) in enumerate(sim_list):
+        sim_latex = sim_name_to_latex[sim_name]
+        move_to_sim_dir(sim_round, sim_name, do_print=False)
+        data = SimpleNamespace(**np.load('starcat/data.npz'))
+        sim = SimpleNamespace(round=sim_round, name=sim_name, latex=sim_latex, data=data)
+        yield i, sim
+
+def calc_corrw(x, y, w):
+    ''' 
+    Compute the weighted correlation between two variables. 
+    
+    Args
+    x, y: variables
+    w: weights
+
+    Returns
+    corrw: weighted correlation coefficient
+    '''
+    x, y, w = x.flatten(), y.flatten(), w.flatten()
+    x_meanw, y_meanw = np.sum(w*x) / np.sum(w), np.sum(w*y) / np.sum(w)
+    x_adj, y_adj = x - x_meanw, y - y_meanw
+    corrw = np.sum(w * x_adj * y_adj) / np.sqrt(np.sum(w * x_adj**2)) / np.sqrt(np.sum(w * y_adj**2))
+    return corrw
+
+def calc_pcorrw(x, y, z, w):
+    ''' 
+    Compute the weighted partial correlation between two variables holding a third constant. 
+    
+    Args
+    x, y: variables
+    z: constant variable
+    w: weights
+
+    Returns
+    corrw: weighted partial correlation coefficient
+    '''
+    x, y, z, w = x.flatten(), y.flatten(), z.flatten(), w.flatten()
+    corrw_xy, corrw_xz, corrw_zy = calc_corrw(x, y, w), calc_corrw(x, z, w), calc_corrw(z, y, w)
+    pcorrw = (corrw_xy - corrw_xz * corrw_zy) / np.sqrt(1 - corrw_xz**2) / np.sqrt(1 - corrw_zy**2)
+    return pcorrw
+
+def two_point_corr(coord, bins, weight=None, nsample=None, nrandom=None, length_unit=None, weight_unit=None, ntrial=1):
+    '''
+    Compute the two-point correlation function given an array of particle coordinates.
+
+    Args
+    coord: array of partical coordinates
+    bins: radial bins
+    weight: weight of the particles
+    nsample: number of particles to sample
+    nrandom: number of random particles in the comparison sample
+    length_unit: rescale the coordinates before the calculation
+    weight_unit: rescale the weights before the calculation
+    ntrial: number of trials over which to average
+    
+    Returns
+    corr: two-point correlation function
+    '''
+    if np.all(weight) == None: weight = np.ones(coord.shape[1])
+    if nsample == None: nsample = coord.shape[1]
+    if nrandom == None: nrandom = nsample
+    if length_unit == None: length_unit = 2*np.max(coord)
+    if weight_unit == None: weight_unit = np.min(weight)
+    
+    corr_list = np.zeros((ntrial, bins.size))
+    for i in range(ntrial):
+    
+        cond = np.random.choice(coord.shape[1], size=nsample, replace=False)
+        coord_unitless = coord[:, cond]/length_unit+0.5
+        weight_unitless = weight[cond]/weight_unit
+        bins_unitless = bins/length_unit
+
+        coord_random = np.random.random((3, nrandom))
+        ratio = np.sum(weight_unitless)/nrandom
+
+        tree_data = cKDTree(coord_unitless.T)
+        tree_random = cKDTree(coord_random.T)
+
+        data_data_count = tree_data.count_neighbors(tree_data, bins_unitless, cumulative=False, weights=(weight_unitless, weight_unitless))
+        data_random_count = tree_data.count_neighbors(tree_random, bins_unitless, cumulative=False, weights=(weight_unitless, None))
+        random_random_count = tree_random.count_neighbors(tree_random, bins_unitless, cumulative=False)
+        corr_list[i] = (data_data_count - 2*ratio*data_random_count + ratio**2*random_random_count) / (ratio**2*random_random_count)
+
+    corr = np.mean(corr_list, axis=0)
+    
+    return corr
+

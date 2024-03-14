@@ -91,7 +91,7 @@ if __name__ == '__main__':
     if os.path.isfile('starcat/data.npz'):
         stardata = np.load('starcat/data.npz')
         time1d = stardata['time1d']
-        SFR1d = stardata['starmass_hist1d'] / np.diff(time1d)[0]
+        SFR1d = stardata['starmass_hist1d']
         do_SFR_plot = True
     else:
         do_SFR_plot = False
