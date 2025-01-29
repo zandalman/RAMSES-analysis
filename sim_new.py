@@ -263,7 +263,7 @@ class Sim(object):
         if do_avg: img /= np.sum(weight, axis=idx_axis)[idx_left:idx_right, idx_bottom:idx_top]
         return img
         
-    def proj_anyaxis(self, field, size_img=None, size_sample=None, vec_camera=np.array([0, 0, 1]), vec_north=np.array([0, 1, 0]), coord_center=np.array([0, 0, 0]), num_pxl=128, num_sample=10000, weight=None):
+    def proj_anyaxis(self, field, size_img=None, size_sample=None, vec_camera=np.array([0, 0, 1]), vec_north=np.array([0, 1, 0]), coord_center=np.array([0, 0, 0]), num_pxl=128, num_sample=10000, weight=None, do_avg=True):
         '''
         Project a field along any axis.
         
@@ -296,7 +296,8 @@ class Sim(object):
             for j in range(num_pxl):
                 coord_sample = coord_pxl[:, i, j, None] + vec_camera[:, None] * arr_sample[None, :]
                 idx_sample = np.array([np.searchsorted(self.coord1d[i], coord_sample[i]) for i in [X, Y, Z]])
-                img[i, j] = np.sum(field_weighted[tuple(idx_sample)]) / np.sum(weight[tuple(idx_sample)])
+                img[i, j] = np.sum(field_weighted[tuple(idx_sample)])
+                if do_avg: img[i, j] /= np.sum(weight[tuple(idx_sample)])
 
         return vec_coord1, vec_coord2, img
     
@@ -437,7 +438,7 @@ class Sim(object):
     @cached_property
     def eps_sf(self):
         ''' Star formation efficiency. '''
-        return calc_eps_sf(self.density, self.energy_turb, self.temp, self.dx_local, self.b_turb)
+        return calc_eps_sf2(self.density, self.energy_turb, self.temp, self.dx_local, self.b_turb)
 
     @cached_property
     def t_ff(self):

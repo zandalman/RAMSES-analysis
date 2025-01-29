@@ -454,7 +454,7 @@ def calc_profile1d(coord, field, vmin=None, vmax=None, nbin=256, weight=None, do
     ''' Compute the profile of a field with respect to a coordinate. '''
     if np.all(weight) == None: weight = np.ones_like(field)
     coord1d, weighted_field1d = calc_hist1d(coord, vmin, vmax, nbin, weight=(field * weight), do_log=do_log, do_binnorm=False)
-    coord1d, weight1d = calc_hist(coord, vmin, vmax, nbin, weight=weight, do_log=do_log, do_binnorm=False)
+    coord1d, weight1d = calc_hist1d(coord, vmin, vmax, nbin, weight=weight, do_log=do_log, do_binnorm=False)
     field1d = np.cumsum(weighted_field1d) / np.cumsum(weight1d) if do_cum else weighted_field1d / weight1d
     return coord1d, field1d
 
@@ -568,7 +568,7 @@ def get_info(dump):
     info.H0 *= const.km / const.Mpc
     return info
 
-def move_to_sim_dir(sim_round, sim_name, do_print=True):
+def move_to_sim_dir(sim_round, sim_name, do_print=False):
     ''' Move to simulation directory. '''
     sim_dir = os.path.join(sim_base_dir, "round%d" % sim_round, sim_name)
     os.chdir(sim_dir)
@@ -718,3 +718,49 @@ def two_point_corr(coord, bins, weight=None, nsample=None, nrandom=None, length_
     
     return corr
 
+class IMF(object):
+    ''' 
+    Broken power law IMF.
+    
+    Args
+    mcut: list of mass cuts separating power law sections
+    exp: list of exponents for power law sections
+    
+    Attrs
+    num_sec: number of power law sections
+    const: list of relative normalization constants given by continuity
+    '''
+    def __init__(self, mcut, exp):
+        
+        assert len(mcut)+1 == len(exp), "exponent list must have length of mass cut list plus one"
+        self.mcut = mcut
+        self.exp = exp
+        self.num_sec = len(self.exp)
+        
+        self.const = np.ones(self.num_sec)
+        for i in range(2, self.num_sec+1): 
+            self.const[-i] = self.const[-i+1]*self.mcut[-i+1]**(self.exp[-i+1]-self.exp[-i])
+
+    def integrate(self, llim=None, ulim=None, exp_add=1):
+        '''
+        Integrate the IMF.
+        
+        Args
+        llim, ulim: lower and upper integration bounds
+        exp_add: exponent of mass to add in the integration e.g. exp_add=1 integrates mass
+        '''
+        lidx = 0 if llim==None else np.searchsorted(self.mcut, llim)
+        uidx = self.num_sec if ulim==None else np.searchsorted(self.mcut, ulim)
+        
+        mcut_copy = np.pad(self.mcut, 1)
+        mcut_copy[-1] = np.inf
+        if llim!=None: mcut_copy[lidx] = llim
+        if ulim!=None: mcut_copy[uidx+1] = ulim
+        
+        res = 0
+        for i in range(lidx, uidx):
+            exp = self.exp[i]+exp_add+1
+            res += self.const[i]/exp*(mcut_copy[i+1]**exp-mcut_copy[i]**exp)
+            
+        return res 
+        

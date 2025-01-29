@@ -7,9 +7,9 @@ BIRTH, DEATH = 0, 1 # star log categories
 epsilon = 1e-30 # small number
 
 # directories
-analysis_dir = "/home/za9132/analysis"
+analysis_dir = "/home/za9132/projects/cosmic_dawn"
 save_dir = analysis_dir + "/figures/current"
-sim_base_dir = "/home/za9132/scratch/romain"
+sim_base_dir = "/home/za9132/scratch/cosmic_dawn"
 
 # halo cubic fit
 halo_poptx = [0.50685686, -0.085267235, 1.9921783, -7.7235762]
@@ -55,6 +55,11 @@ sim_name_to_latex = {
     "eps5p0": r"$\varepsilon_{\rm SF, loc} = 5.0$",
     "instantfeedback": r"$t_{\rm fbk} = 0.0~{\rm Myr}$",
     "epscut": r"$\varepsilon_{\rm SF} > 13$%",
-    "nophot": "no photoionization",
+    "nophot": "no photoionization (mff)",
     "nofeed": "no feedback",
+    "nophotconst": "no photoionization (const eff)",
+    "nophotconstmstar5p0": r"no photoionization (const eff), $m_*=5.0$",
+    "noboth": "no feedback",
+    "lowturb": r"$f_{\rm turb} = 0.1$",
+    "medturb": r"$f_{\rm turb} = 0.5$"
 }

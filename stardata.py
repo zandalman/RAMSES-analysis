@@ -31,38 +31,37 @@ args = parser.parse_args()
 boxlen = 100 * const.Mpc / const.h0 # box size
 rho_crit_h0e1 = 1.88e-29 # critical density for h0 = 1
 
-# list 1d histogram parameters
+# list histogram parameters
 histparam_list = [
-    Hist('time', 0, 550*const.Myr, name='starmass', weight='mass', nbin=10*550, do_log=False),
-    Hist('time', 0, 550*const.Myr, name='starnum', nbin=10*550, do_log=False, idx_event=DEATH),
+    Hist(['nH', 'temp'], [1e1, 3e1], [1e6, 3e4], dim=2, weight='mass', nbin=256),
+    Hist(['nH', 'mach_turb'], [1e1, 1e0], [1e6, 1e3], dim=2, weight='mass', nbin=256),
+    Hist(['nH', 'metallicity'], [1e1, 1e-2*const.Z_sol], [1e6, 1e1*const.Z_sol], dim=2, weight='mass', nbin=256),
+    Hist(['temp', 'mach_turb'], [3e1, 1e0], [3e4, 1e3], dim=2, weight='mass', nbin=256),
+    Hist(['temp', 'metallicity'], [3e1, 1e-2*const.Z_sol], [3e4, 1e1*const.Z_sol], dim=2, weight='mass', nbin=256),
+    Hist(['mach_turb', 'metallicity'], [1e0, 1e-2*const.Z_sol], [1e3, 1e1*const.Z_sol], dim=2, weight='mass', nbin=256),
+    Hist('nH', 1e1, 1e6, weight='mass', nbin=256),
+    Hist('temp', 3e1, 3e4, weight='mass', nbin=256),
+    Hist('mach_turb', 1e0, 1e3, weight='mass', nbin=256),
+    Hist('metallicity', 1e-2*const.Z_sol, 1e1*const.Z_sol, weight='mass', nbin=256),
     Hist('eps_sf', 1e-4, 1e1, weight='mass'),
-    Hist('eps_sf', 1e-4, 1e1, idx_event=DEATH),
+    Hist('time', 0, 550*const.Myr, name='starmass', weight='mass', nbin=10*550, do_log=False),
     Hist('b_turb', 1/3, 1.0, weight='mass', do_log=False),
-    Hist('b_turb', 1/3, 1.0, do_log=False, idx_event=DEATH),
-    Hist('metallicity', 1e-3*const.Z_sol, 1e1*const.Z_sol, weight='mass'),
-    Hist('metallicity', 1e-3*const.Z_sol, 1e1*const.Z_sol, idx_event=DEATH),
-    Hist('energy_turb', 1e11, 1e16, weight='mass'),
-    Hist('energy_turb', 1e11, 1e16, idx_event=DEATH),
-    Hist('density', 1e-25, 1e-10, weight='mass'),
-    Hist('density', 1e-27, 1e-18, idx_event=DEATH),
-    Hist('temp', 1e1, 1e4, weight='mass'),
-    Hist('temp', 1e1, 1e9, idx_event=DEATH),
-    Hist(['density', 'temp'], [1e-22, 1e1], [1e-18, 1e4], dim=2, weight='mass'),
-    Hist(['density', 'temp'], [1e-27, 1e1], [1e-18, 1e9], dim=2, idx_event=DEATH),
-    Hist('alpha_vir', 1e0, 1e5, weight='mass'),
-    Hist('alpha_vir', 1e0, 1e5, idx_event=DEATH),
-    Hist('mach_turb', 1e-2, 1e3, weight='mass'),
-    Hist('mach_turb', 1e-2, 1e3, idx_event=DEATH),
-    Hist(['alpha_vir', 'mach_turb'], [1e0, 1e-1], [1e5, 1e3], dim=2, weight='mass'),
-    Hist(['alpha_vir', 'mach_turb'], [1e0, 1e-1], [1e5, 1e3], dim=2, idx_event=DEATH),
-    Hist('density_mff', 1e-25, 1e-10, do_trunc=True, weight='mass', nbin=128, name='density_mff_trunc', binname='density_mff_trunc'),
-    Hist('density_mff', 1e-25, 1e-10, do_trunc=False, weight='mass', nbin=128),
-    Hist(['density', 'eps_sf'], [1e-22, 1e-4], [1e-18, 1e1], dim=2, weight='mass'),
-    Hist(['time', 'eps_sf'], [0, 1e-4], [550*const.Myr, 1e1], dim=2, weight='mass', do_log=[False, True], nbin=[550, 512]),
-    Hist(['density', 'metallicity'], [1e-22, 1e-3*const.Z_sol], [1e-18, 1e1*const.Z_sol], dim=2, weight='mass'),
-    Hist(['density', 'mach_turb'], [1e-22, 1e-1], [1e-18, 1e3], dim=2, weight='mass'),
-    Hist(['metallicity', 'mach_turb'], [1e-3*const.Z_sol, 1e-1], [1e1*const.Z_sol, 1e3], dim=2, weight='mass'),
-    Hist(['nH', 'ncool'], [1e1, 1e1], [1e6, 1e6], dim=2, weight='mass')
+    Hist(['nH', 'temp'], [1e-4, 3e1], [1e5, 1e9], dim=2, idx_event=DEATH, nbin=256),
+    Hist(['nH', 'mach_turb'], [1e-4, 1e-2], [1e5, 1e3], dim=2, idx_event=DEATH, nbin=256),
+    Hist(['nH', 'metallicity'], [1e-4, 1e-2*const.Z_sol], [1e5, 1e1*const.Z_sol], dim=2, idx_event=DEATH, nbin=256),
+    Hist(['temp', 'mach_turb'], [3e1, 1e-2], [1e9, 1e3], dim=2, idx_event=DEATH, nbin=256),
+    Hist(['temp', 'metallicity'], [3e1, 1e-2*const.Z_sol], [1e9, 1e1*const.Z_sol], dim=2, idx_event=DEATH, nbin=256),
+    Hist(['mach_turb', 'metallicity'], [1e-2, 1e-2*const.Z_sol], [1e3, 1e1*const.Z_sol], dim=2, idx_event=DEATH, nbin=256),
+    Hist('nH', 1e-4, 1e5, idx_event=DEATH, nbin=256),
+    Hist('temp', 3e1, 1e9, idx_event=DEATH, nbin=256),
+    Hist('mach_turb', 1e-2, 1e3, idx_event=DEATH, nbin=256),
+    Hist('metallicity', 1e-2*const.Z_sol, 1e1*const.Z_sol, idx_event=DEATH, nbin=256),
+    Hist('eps_sf', 1e-4, 1e1, idx_event=DEATH),
+    Hist('time', 0, 550*const.Myr, name='starnum', nbin=10*550, do_log=False, idx_event=DEATH),
+    Hist('b_turb', 1/3, 1.0, idx_event=DEATH, do_log=False),
+    Hist('sig_turb', 1e0*const.km, 1e3*const.km, weight='mass', nbin=256),
+    Hist('sig_turb', 1e0*const.km, 1e3*const.km, nbin=256, idx_event=DEATH),
+    Hist('rcool', 1e-2*const.pc, 1e3*const.pc, nbin=256, idx_event=DEATH)
 ]
 num_hist = len(histparam_list)
 
@@ -116,12 +115,13 @@ def read_starcat_1cpu(idx_cpu):
         aexp = proper_time_to_aexp_interp(stardata['time'])
         dx = aexp * boxlen / 2**stardata['level']
         c_s = np.sqrt(2/3 * const.k_B * stardata['temp'] / const.m_p) # sound speed
-        stardata['mach_turb'] = np.sqrt(2/3 * stardata['energy_turb']) / c_s # turbulent Mach number
+        stardata['sig_turb'] = np.sqrt(2/3 * stardata['energy_turb']) # turbulent velocity dispersion
+        stardata['mach_turb'] = stardata['sig_turb'] / c_s # turbulent Mach number
         stardata['alpha_vir'] = 15 / np.pi * c_s**2 * (1 + stardata['mach_turb']**2) / (const.G * stardata['density'] * dx**2) # virial parameter
         b_turb = stardata['b_turb'] if args.bturb == 0. else args.bturb
         stardata['eps_sf'] = calc_eps_sf2(stardata['density'], stardata['energy_turb'], stardata['temp'], dx, b_turb=b_turb, eps_sf_loc=args.epssfloc)
         stardata['nH'] = const.X_cosmo*stardata['density']/const.m_H
-        stardata['ncool'] = 3.4e3 * (stardata['metallicity']/const.Z_sol)**(-2) * (stardata['temp']/1e4)**2
+        stardata['rcool'] = 3.*const.pc * (stardata['metallicity']/const.Z_sol)**(-0.082) * (stardata['nH']/100)**(-0.42)
 
         # calculate histograms
         for i, histparam in enumerate(histparam_list):

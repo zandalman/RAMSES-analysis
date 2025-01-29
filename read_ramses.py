@@ -306,13 +306,15 @@ def read_timer():
     stat_list = ["min", "max", "avg", "std", "relstd", "percent"]
     timing = {category: {stat: [] for stat in stat_list} for category in timing_cat_list}
     timing["dump"] = []
+    timing["runtime"] = [0]
     for file in sorted(os.listdir()):
         if file[:6] == 'output':
             timer_path = os.path.join(file, "timer%s.txt" % file[6:])
             with open(timer_path, "r") as f:
                 timing["dump"].append(int(file[7:]))
                 cat_list_copy = timing_cat_list.copy()
-                for line in f.readlines()[3:-1]:
+                lines = f.readlines()
+                for line in lines[3:-1]:
                     line_split = line.split()
                     category = " ".join(line_split[8:])
                     timing[category]["min"].append(float(line_split[0]))
@@ -325,4 +327,5 @@ def read_timer():
                 for category in cat_list_copy:
                     for stat in stat_list:
                         timing[category][stat].append(0.)
+                timing["runtime"].append(float(lines[-1].split()[0]) + timing["runtime"][-1])
     return timing
